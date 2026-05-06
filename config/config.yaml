@@ -1,0 +1,209 @@
+# DSS Runtime Configuration
+# Non-secret, structured runtime settings.
+# Secret values (URIs, API keys, JWT secrets) belong in .env — never here.
+# All settings here can be overridden by DSS_-prefixed environment variables.
+
+# ── MongoDB connection (non-secret) ──────────────────────────────────────────
+mongo:
+  connect_timeout_ms: 5000
+  server_selection_timeout_ms: 10000
+  retry_count: 5
+  retry_backoff_seconds: 2.0
+
+# ── Scheduling ────────────────────────────────────────────────────────────────
+scheduling:
+  # Weekly recalibration — cron expression in UTC
+  # Default: Monday at 02:00 UTC
+  recalibration_cron: "0 2 * * 1"
+
+  # Prediction cycle interval in seconds (default: every hour)
+  prediction_interval_seconds: 3600
+
+# ── WINGS datastream mappings ────────────────────────────────────────────────
+# Maps canonical variable_name → WINGS datastream_id.
+# sensor_id is the canonical identifier used in preprocessed_measurements.
+wings:
+  page_size: 1000
+  sensors:
+    # ── Aquaread Water Quality station 252186 ─────────────────────────────────
+    - sensor_id: aquaread_1
+      datastreams:
+        ph:                "862382069252186_ph"
+        dissolved_oxygen:  "862382069252186_dissolved_oxygen"
+        temperature_water: "862382069252186_temperature"
+        turbidity:         "862382069252186_turbidity"
+        conductivity:      "862382069252186_conductivity"
+        do_saturation:     "862382069252186_dissolved_oxygen_saturation"
+        tds:               "862382069252186_tds"
+        salinity:          "862382069252186_salinity"
+        orp:               "862382069252186_orp"
+        ammonia:           "862382069252186_ammonia"
+        nitrate:           "862382069252186_nitrate"
+        chlorophyll_a:     "862382069252186_chlorophyll"
+        ammonium:          "862382069252186_ammonium"
+        blue_green_algae:  "862382069252186_blue_green_algae"
+        cdom:              "862382069252186_cdom"
+        sigma_t:           "862382069252186_sigma_t"
+
+    # ── Aquaread Water Quality station 252251 ─────────────────────────────────
+    - sensor_id: aquaread_2
+      datastreams:
+        ph:                "862382069252251_ph"
+        dissolved_oxygen:  "862382069252251_dissolved_oxygen"
+        temperature_water: "862382069252251_temperature"
+        turbidity:         "862382069252251_turbidity"
+        conductivity:      "862382069252251_conductivity"
+        do_saturation:     "862382069252251_dissolved_oxygen_saturation"
+        tds:               "862382069252251_tds"
+        salinity:          "862382069252251_salinity"
+        orp:               "862382069252251_orp"
+        ammonia:           "862382069252251_ammonia"
+        nitrate:           "862382069252251_nitrate"
+        chlorophyll_a:     "862382069252251_chlorophyll"
+        ammonium:          "862382069252251_ammonium"
+        blue_green_algae:  "862382069252251_blue_green_algae"
+        cdom:              "862382069252251_cdom"
+        sigma_t:           "862382069252251_sigma_t"
+
+    # ── HCMR water quality station ────────────────────────────────────────────
+    - sensor_id: hcmr
+      datastreams:
+        ph:                "hcmr_15045987545_ph"
+        temperature_water: "hcmr_15045987545_temperature"
+        conductivity:      "hcmr_15045987545_conductivity"
+        dissolved_oxygen:  "hcmr_15045987545_dissolved_oxygen"
+        orp:               "hcmr_15045987545_orp"
+
+    # ── Soil station ──────────────────────────────────────────────────────────
+    - sensor_id: soil_station_1
+      datastreams:
+        soil_moisture:     "862382069245248_teros_12_volumetric_water_content"
+        soil_temperature:  "862382069245248_teros_12_soil_temperature"
+        nitrogen:          "862382069245248_npk_nitrogen"
+        phosphorus:        "862382069245248_npk_phosphorus"
+        potassium:         "862382069245248_npk_potassium"
+        soil_conductivity: "862382069245248_teros_12_soil_conductivity"
+
+# ── UOWM sensor ID mappings ──────────────────────────────────────────────────
+# Maps canonical variable_name → UOWM sensor numeric ID.
+uowm:
+  sensors:
+    air_temperature:     142
+    rainfall:            144
+    humidity:            145
+    wind_speed:          154
+    wind_direction:      155
+    solar_radiation:     156
+    infrared_temperature: 754
+
+# ── Ingestion sources and per-variable poll intervals ─────────────────────────
+# Each entry maps to one APScheduler job per (source, variable_name) pair.
+# poll_interval_seconds controls how often the job fires.
+ingestion:
+  sources:
+    - name: wings_water
+      variables:
+        - name: ph
+          poll_interval_seconds: 900          # 15 minutes
+        - name: dissolved_oxygen
+          poll_interval_seconds: 900
+        - name: temperature_water
+          poll_interval_seconds: 900
+        - name: turbidity
+          poll_interval_seconds: 900
+        - name: conductivity
+          poll_interval_seconds: 900
+        - name: orp
+          poll_interval_seconds: 900
+        - name: do_saturation
+          poll_interval_seconds: 900
+        - name: tds
+          poll_interval_seconds: 900
+        - name: salinity
+          poll_interval_seconds: 900
+        - name: ammonia
+          poll_interval_seconds: 900
+        - name: nitrate
+          poll_interval_seconds: 900
+        - name: chlorophyll_a
+          poll_interval_seconds: 900
+        - name: ammonium
+          poll_interval_seconds: 900
+        - name: blue_green_algae
+          poll_interval_seconds: 900
+        - name: cdom
+          poll_interval_seconds: 900
+        - name: sigma_t
+          poll_interval_seconds: 900
+
+    - name: wings_soil
+      variables:
+        - name: soil_moisture
+          poll_interval_seconds: 1800         # 30 minutes
+        - name: soil_temperature
+          poll_interval_seconds: 1800
+        - name: nitrogen
+          poll_interval_seconds: 1800
+        - name: phosphorus
+          poll_interval_seconds: 1800
+        - name: potassium
+          poll_interval_seconds: 1800
+        - name: soil_conductivity
+          poll_interval_seconds: 1800
+
+    - name: uowm_met
+      variables:
+        - name: rainfall
+          poll_interval_seconds: 3600         # 1 hour
+        - name: air_temperature
+          poll_interval_seconds: 3600
+        - name: humidity
+          poll_interval_seconds: 3600
+        - name: wind_speed
+          poll_interval_seconds: 3600
+        - name: wind_direction
+          poll_interval_seconds: 3600
+        - name: solar_radiation
+          poll_interval_seconds: 3600
+        - name: infrared_temperature
+          poll_interval_seconds: 3600
+
+  # Per-variable forward-fill limits (seconds).
+  # A gap longer than this will NOT be filled — value left as missing.
+  forward_fill:
+    default_max_duration_seconds: 3600
+    overrides:
+      rainfall: 7200
+      soil_moisture: 7200
+
+# ── Model and training settings ───────────────────────────────────────────────
+training:
+  # "full" = expanding window from historical_start_date to now
+  # "sliding" = rolling window of sliding_window_days before the training run
+  window_strategy: "full"
+  sliding_window_days: 365
+  historical_start_date: "2022-01-01"
+
+  # Metric gate thresholds.  A candidate model must beat ALL thresholds to be activated.
+  metric_thresholds:
+    min_r2: 0.75
+    max_mae_relative: 0.15      # MAE as a fraction of target variable range
+
+  # Artifact retention: whether to delete the previous active model file when retiring it.
+  artifact_retention_keep_previous: true
+
+# ── API service settings (non-secret) ─────────────────────────────────────────
+api:
+  default_page_size: 24
+  max_page_size: 200
+  shap_top_n: 5                # Number of top SHAP features returned in API responses
+  token_expiry_seconds: 86400  # 24 hours
+
+# ── Feature flags ─────────────────────────────────────────────────────────────
+features:
+  enable_water_pipeline: true
+  enable_soil_pipeline: true
+  enable_satellite_pipeline: false     # NDVI/satellite disabled in v1
+  enable_xai: true
+  enable_white_box_models: true
+  enable_black_box_models: true

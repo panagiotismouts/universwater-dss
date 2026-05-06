@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Tests
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Secrets — never bake into image
+.env
+*.env
+*.pem
+*.key
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Model artifacts (mounted as volume, not in image)
+artifacts/
+
+# Notebooks / data exploration
+*.ipynb
+*.csv
+*.xlsx
+
+# Docker files themselves
+docker-compose*.yml
+**/Dockerfile
+.dockerignore
+
+# Docs
+*.md

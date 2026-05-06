@@ -1,0 +1,87 @@
+services:
+
+  # ── MongoDB ────────────────────────────────────────────────────────────────
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping').ok", "--quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # MongoDB is intentionally not exposed on the host in production.
+    # Uncomment the line below for local development access (e.g. MongoDB Compass):
+    # ports:
+    #   - "27017:27017"
+
+  # ── Ingestion service ──────────────────────────────────────────────────────
+  ingestion:
+    build:
+      context: .
+      dockerfile: services/ingestion/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DSS_MONGO_URI: mongodb://mongo:27017
+      DSS_SERVICE_NAME: ingestion
+      DSS_LOG_FORMAT: json
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - ./config/config.yaml:/app/config/config.yaml:ro
+
+  # ── ML engine ─────────────────────────────────────────────────────────────
+  ml_engine:
+    build:
+      context: .
+      dockerfile: services/ml_engine/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DSS_MONGO_URI: mongodb://mongo:27017
+      DSS_SERVICE_NAME: ml_engine
+      DSS_LOG_FORMAT: json
+      DSS_MODEL_ARTIFACT_PATH: /app/artifacts
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - ./config/config.yaml:/app/config/config.yaml:ro
+      - model_artifacts:/app/artifacts
+
+  # ── API service ───────────────────────────────────────────────────────────
+  api_service:
+    build:
+      context: .
+      dockerfile: services/api_service/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DSS_MONGO_URI: mongodb://mongo:27017
+      DSS_SERVICE_NAME: api_service
+      DSS_LOG_FORMAT: json
+      DSS_API_HOST: 0.0.0.0
+      DSS_API_PORT: "8000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    # api_service starts independently of ingestion/ml_engine (Amendment C.6)
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config/config.yaml:/app/config/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  mongo_data:
+  model_artifacts:

@@ -1,0 +1,36 @@
+"""DSS exception hierarchy."""
+from dss_shared.exceptions.dss_exceptions import (
+    DSSException,
+    ConfigurationError,
+    MongoUnavailableError,
+    MongoWriteError,
+    ModelNotFoundError,
+    ModelRejectedError,
+    RecalibrationRejectedError,
+    SourceAPIError,
+    SourceAPITimeoutError,
+    IngestionValidationError,
+    PreprocessingError,
+    FeatureEngineeringError,
+    AuthenticationError,
+    TokenExpiredError,
+    ClientNotFoundError,
+)
+
+__all__ = [
+    "DSSException",
+    "ConfigurationError",
+    "MongoUnavailableError",
+    "MongoWriteError",
+    "ModelNotFoundError",
+    "ModelRejectedError",
+    "RecalibrationRejectedError",
+    "SourceAPIError",
+    "SourceAPITimeoutError",
+    "IngestionValidationError",
+    "PreprocessingError",
+    "FeatureEngineeringError",
+    "AuthenticationError",
+    "TokenExpiredError",
+    "ClientNotFoundError",
+]

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dss_shared"
+version = "0.1.0"
+description = "Shared library for the DSS — config, DB client, schemas, logging, exceptions"
+requires-python = ">=3.11"
+dependencies = [
+    "motor>=3.3",           # Async MongoDB driver
+    "pymongo>=4.6",         # Sync MongoDB driver (used for index creation scripts)
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+    "pyyaml>=6.0",
+    "structlog>=24.1",
+    "python-dotenv>=1.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dss_shared*"]
