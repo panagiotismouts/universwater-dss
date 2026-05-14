@@ -38,6 +38,9 @@ class DataSource(str, Enum):
     """External API sources from which sensor readings are ingested."""
     WINGS = "wings"
     UOWM = "uowm"
+    WINGS_WATER = "wings_water"
+    WINGS_SOIL = "wings_soil"
+    UOWM_MET = "uowm_met"
 
 
 # ── Model taxonomy ────────────────────────────────────────────────────────────
