@@ -20,6 +20,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from dss_shared.config import get_settings
 from dss_shared.logging import get_logger
 from services.ml_engine.prediction.predictor import run_prediction_cycle
+from services.ml_engine.training.bootstrap import run_bootstrap_if_needed
 from services.ml_engine.training.recalibration import run_recalibration
 
 log = get_logger(__name__)
@@ -81,6 +82,18 @@ def build_ml_scheduler(db: AsyncIOMotorDatabase) -> AsyncIOScheduler:
         job="prediction_cycle",
         interval_seconds=settings.prediction_interval_seconds,
     )
+
+    # ── Bootstrap check job ────────────────────────────────────────────────
+    scheduler.add_job(
+        func=lambda: asyncio.ensure_future(run_bootstrap_if_needed(db)),
+        trigger=IntervalTrigger(seconds=3600),
+        id="bootstrap_check",
+        name="Bootstrap check",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+    log.info("ml_scheduler_job_registered", job="bootstrap_check", interval_seconds=3600)
 
     log.info("ml_scheduler_built")
     return scheduler

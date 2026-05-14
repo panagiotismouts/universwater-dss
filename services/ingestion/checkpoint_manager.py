@@ -33,7 +33,7 @@ log = get_logger(__name__)
 _BOOTSTRAP_EPOCH = datetime(2022, 1, 1, tzinfo=timezone.utc)
 
 # Fallback when no checkpoint exists and bootstrap mode is off.
-_DEFAULT_SINCE = datetime(2025, 9, 1, tzinfo=timezone.utc)
+_DEFAULT_SINCE = datetime(2025, 10, 1, tzinfo=timezone.utc)
 
 
 class CheckpointManager:
