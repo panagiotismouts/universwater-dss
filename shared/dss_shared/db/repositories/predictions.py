@@ -154,6 +154,14 @@ class PredictionRepository(BaseRepository):
         )
         return count > 0
 
+    async def update_xai_result_id(self, pred_id: str, xai_result_id: str) -> None:
+        """Back-fill xai_result_id on a prediction document after XAI insert."""
+        from bson import ObjectId
+        await self.col.update_one(
+            {"_id": ObjectId(pred_id)},
+            {"$set": {"xai_result_id": xai_result_id}},
+        )
+
     async def find_by_model_id(
         self, model_id: str, limit: int = 100
     ) -> list[PredictionDocument]:

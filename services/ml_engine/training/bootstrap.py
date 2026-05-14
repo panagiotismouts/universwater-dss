@@ -109,8 +109,11 @@ async def _run_bootstrap_for_pipeline(db, pipeline_cfg, start: datetime, end: da
     val_start = end  # placeholder; exact timestamps not tracked through numpy
     val_end = end
 
+    # Train all model types; collect (model_id, r2, passed, model, artifact_rel) tuples.
+    # Activate only the single best-performing model after all are trained.
+    candidates = []
     for model_type in pipeline_cfg.model_types:
-        await _train_and_register(
+        result = await _train_and_register(
             db=db,
             pipeline=pipeline,
             model_type=model_type,
@@ -126,6 +129,21 @@ async def _run_bootstrap_for_pipeline(db, pipeline_cfg, start: datetime, end: da
             val_start=val_start,
             val_end=val_end,
             store=store,
+        )
+        if result is not None:
+            candidates.append(result)
+
+    # Pick the candidate with the highest R² and activate only that one
+    if candidates:
+        best = max(candidates, key=lambda c: c[1])  # c = (model_id, r2, model, artifact_rel)
+        best_model_id, best_r2, best_model, best_artifact_rel = best
+        best_model.save(store._resolve(best_artifact_rel))
+        await activate_model(db, best_model_id)
+        log.info(
+            "bootstrap_best_model_activated",
+            pipeline=pipeline,
+            model_id=best_model_id,
+            r2=f"{best_r2:.4f}",
         )
 
 
@@ -145,7 +163,9 @@ async def _train_and_register(
     val_start: datetime,
     val_end: datetime,
     store: ArtifactStore,
-) -> None:
+) -> "tuple[str, float, object, str] | None":
+    """Train and register one model type. Returns (model_id, r2, model, artifact_rel)
+    if the metric gate passes, or None if rejected."""
     now = _utc_now()
     model_id = _make_model_id(pipeline, model_type)
     artifact_rel = f"{pipeline}/{model_type}/{model_id}.joblib"
@@ -196,16 +216,14 @@ async def _train_and_register(
     await insert_candidate(db, candidate)
 
     if metrics_doc.passed_threshold:
-        # Save artifact before activating
-        store.save(model, artifact_rel)
-        await activate_model(db, model_id)
         log.info(
-            "bootstrap_model_activated",
+            "bootstrap_model_passed_gate",
             pipeline=pipeline,
             model_type=model_type,
             model_id=model_id,
             r2=f"{m.r2:.4f}",
         )
+        return (model_id, m.r2, model, artifact_rel)
     else:
         await reject_model(db, model_id, metrics_doc.rejection_reason or "metric gate failed")
         log.warning(
@@ -215,3 +233,4 @@ async def _train_and_register(
             model_id=model_id,
             reason=metrics_doc.rejection_reason,
         )
+        return None

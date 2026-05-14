@@ -46,6 +46,11 @@ FEATURE_SCHEMA_VERSION = "water_v1"
 
 MIN_WATER_READINGS = 2   # minimum 'ph' readings in 1h window
 
+# UOWM meteorological sensor IDs (numeric string, as stored in MongoDB)
+_MET_SENSOR_AIR_TEMP = "142"
+_MET_SENSOR_RAINFALL = "144"
+_MET_SENSOR_HUMIDITY = "145"
+
 _1H = timedelta(hours=1)
 _3H = timedelta(hours=3)
 _6H = timedelta(hours=6)
@@ -72,9 +77,9 @@ async def compute_water_features(
     cond_docs = await repo.find_window("water", sensor_id, "conductivity",      window_start, feature_timestamp)
     orp_docs  = await repo.find_window("water", sensor_id, "orp",               window_start, feature_timestamp)
 
-    rain_docs    = await repo.find_window("met_water", sensor_id, "rainfall",        window_start, feature_timestamp)
-    airtemp_docs = await repo.find_window("met_water", sensor_id, "air_temperature", window_start, feature_timestamp)
-    humid_docs   = await repo.find_window("met_water", sensor_id, "humidity",        window_start, feature_timestamp)
+    rain_docs    = await repo.find_window("met_water", _MET_SENSOR_RAINFALL, "rainfall",        window_start, feature_timestamp)
+    airtemp_docs = await repo.find_window("met_water", _MET_SENSOR_AIR_TEMP, "air_temperature", window_start, feature_timestamp)
+    humid_docs   = await repo.find_window("met_water", _MET_SENSOR_HUMIDITY, "humidity",        window_start, feature_timestamp)
 
     ph_1h = _in_window(ph_docs, feature_timestamp, _1H)
     if len(ph_1h) < MIN_WATER_READINGS:
@@ -99,6 +104,15 @@ async def compute_water_features(
     _add_lags(features, cond_docs, "conductivity", n=1)
     _add_rolling(features, orp_docs,  feature_timestamp, "orp",          _1H)
     _add_lags(features, orp_docs, "orp", n=1)
+
+    # Raw current values for target variable candidates (required by dataset_builder)
+    _add_current_value(features, ph_docs,   "ph")
+    _add_current_value(features, do_docs,   "dissolved_oxygen")
+    _add_current_value(features, temp_docs, "temperature_water")
+    _add_current_value(features, turb_docs, "turbidity")
+    _add_current_value(features, cond_docs, "conductivity")
+    _add_current_value(features, orp_docs,  "orp")
+
     _add_sum(features, rain_docs,    feature_timestamp, "rainfall",    _1H, _3H)
     _add_rolling(features, airtemp_docs, feature_timestamp, "air_temp",  _1H, _3H)
     _add_rolling(features, humid_docs,   feature_timestamp, "humidity",  _1H)
@@ -181,6 +195,13 @@ def _add_time_encodings(features: dict, ts: datetime) -> None:
     features["dayofweek_cos"] = math.cos(2 * math.pi * ts.weekday() / 7)
     features["month_sin"]     = math.sin(2 * math.pi * (ts.month - 1) / 12)
     features["month_cos"]     = math.cos(2 * math.pi * (ts.month - 1) / 12)
+
+
+def _add_current_value(features: dict, docs: list[MeasurementDocument], key: str) -> None:
+    """Store the most recent ok-quality reading under its canonical variable name."""
+    ok = [d for d in docs if d.quality_flag == "ok"]
+    if ok:
+        features[key] = sorted(ok, key=lambda d: d.measured_at)[-1].value
 
 
 def _fill_fraction(docs: list[MeasurementDocument]) -> float:

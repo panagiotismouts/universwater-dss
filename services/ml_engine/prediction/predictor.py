@@ -199,10 +199,13 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
             )
             pred_id = await pred_repo.insert(pred_doc)
 
-            # If XAI was computed, persist the XAI doc with real prediction_id
+            # If XAI was computed, persist the XAI doc with real prediction_id,
+            # then back-fill xai_result_id on the prediction document.
             if pred_id and settings.enable_xai and xai_doc is not None:
                 xai_doc.prediction_id = pred_id
                 xai_result_id = await xai_repo.insert(xai_doc)
+                if xai_result_id:
+                    await pred_repo.update_xai_result_id(pred_id, xai_result_id)
 
             log.debug(
                 "prediction_written",

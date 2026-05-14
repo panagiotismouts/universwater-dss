@@ -31,8 +31,8 @@ from dss_shared.config.settings import Settings
 # (in that case DSS_CONFIG_PATH must be set explicitly, e.g. via Dockerfile ENV).
 def _default_config_path() -> Path:
     parents = Path(__file__).parents
-    if len(parents) > 5:
-        return parents[5] / "config" / "config.yaml"
+    if len(parents) > 3:
+        return parents[3] / "config" / "config.yaml"
     # Fallback for installed package: rely on DSS_CONFIG_PATH env var
     return Path("/app/config/config.yaml")
 

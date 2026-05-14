@@ -48,6 +48,7 @@ def get_motor_client() -> AsyncIOMotorClient:
             settings.mongo_uri,
             connectTimeoutMS=settings.mongo_connect_timeout_ms,
             serverSelectionTimeoutMS=settings.mongo_server_selection_timeout_ms,
+            tz_aware=True,
         )
     return _client
 

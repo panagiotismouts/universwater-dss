@@ -117,6 +117,8 @@ async def _recalibrate_pipeline(db, pipeline_cfg, start: datetime, end: datetime
     active = await find_active_model(db, pipeline)
     baseline_model_id = active.model_id if active else None
 
+    # Train all model types; collect passing candidates and activate only the best.
+    candidates = []
     for model_type in pipeline_cfg.model_types:
         model_id = _make_model_id(pipeline, model_type)
         artifact_rel = f"{pipeline}/{model_type}/{model_id}.joblib"
@@ -164,15 +166,14 @@ async def _recalibrate_pipeline(db, pipeline_cfg, start: datetime, end: datetime
         await insert_candidate(db, candidate)
 
         if metrics_doc.passed_threshold:
-            store.save(model, artifact_rel)
-            await activate_model(db, model_id)
             log.info(
-                "recalibration_model_activated",
+                "recalibration_model_passed_gate",
                 pipeline=pipeline,
                 model_type=model_type,
                 model_id=model_id,
                 r2=f"{m.r2:.4f}",
             )
+            candidates.append((model_id, m.r2, model, artifact_rel))
         else:
             await reject_model(db, model_id, metrics_doc.rejection_reason or "metric gate failed")
             log.info(
@@ -182,3 +183,15 @@ async def _recalibrate_pipeline(db, pipeline_cfg, start: datetime, end: datetime
                 model_id=model_id,
                 reason=metrics_doc.rejection_reason,
             )
+
+    # Activate only the single best-performing candidate
+    if candidates:
+        best_model_id, best_r2, best_model, best_artifact_rel = max(candidates, key=lambda c: c[1])
+        best_model.save(store._resolve(best_artifact_rel))
+        await activate_model(db, best_model_id)
+        log.info(
+            "recalibration_best_model_activated",
+            pipeline=pipeline,
+            model_id=best_model_id,
+            r2=f"{best_r2:.4f}",
+        )

@@ -38,7 +38,12 @@ log = get_logger(__name__)
 
 FEATURE_SCHEMA_VERSION = "soil_v1"
 
-MIN_SOIL_READINGS = 2   # minimum 'soil_moisture' readings in 3h window
+MIN_SOIL_READINGS = 1   # minimum 'soil_moisture' readings in 12h window (data arrives ~every 4h)
+
+# UOWM meteorological sensor IDs (numeric string, as stored in MongoDB)
+_MET_SENSOR_AIR_TEMP = "142"
+_MET_SENSOR_RAINFALL = "144"
+_MET_SENSOR_HUMIDITY = "145"
 
 _3H  = timedelta(hours=3)
 _6H  = timedelta(hours=6)
@@ -62,16 +67,16 @@ async def compute_soil_features(
     moist_docs = await repo.find_window("soil", sensor_id, "soil_moisture",    window_start, feature_timestamp)
     temp_docs  = await repo.find_window("soil", sensor_id, "soil_temperature", window_start, feature_timestamp)
 
-    rain_docs    = await repo.find_window("met_soil", sensor_id, "rainfall",        window_start, feature_timestamp)
-    airtemp_docs = await repo.find_window("met_soil", sensor_id, "air_temperature", window_start, feature_timestamp)
-    humid_docs   = await repo.find_window("met_soil", sensor_id, "humidity",        window_start, feature_timestamp)
+    rain_docs    = await repo.find_window("met_soil", _MET_SENSOR_RAINFALL, "rainfall",        window_start, feature_timestamp)
+    airtemp_docs = await repo.find_window("met_soil", _MET_SENSOR_AIR_TEMP, "air_temperature", window_start, feature_timestamp)
+    humid_docs   = await repo.find_window("met_soil", _MET_SENSOR_HUMIDITY, "humidity",        window_start, feature_timestamp)
 
-    moist_3h = _in_window(moist_docs, feature_timestamp, _3H)
-    if len(moist_3h) < MIN_SOIL_READINGS:
+    moist_12h = _in_window(moist_docs, feature_timestamp, _12H)
+    if len(moist_12h) < MIN_SOIL_READINGS:
         log.debug(
             "soil_features_insufficient_data",
             sensor_id=sensor_id,
-            moist_3h_count=len(moist_3h),
+            moist_12h_count=len(moist_12h),
         )
         return None
 
@@ -81,6 +86,10 @@ async def compute_soil_features(
     _add_lags(features, moist_docs, "soil_moisture", n=2)
     _add_rolling(features, temp_docs,  feature_timestamp, "soil_temp",     _3H)
     _add_lags(features, temp_docs, "soil_temp", n=1)
+
+    # Raw current values for target variable candidates (required by dataset_builder)
+    _add_current_value(features, moist_docs, "soil_moisture")
+    _add_current_value(features, temp_docs,  "soil_temperature")
 
     _add_sum(features, rain_docs,    feature_timestamp, "rainfall",  _3H, _6H)
     _add_rolling(features, airtemp_docs, feature_timestamp, "air_temp", _3H)
@@ -153,6 +162,13 @@ def _add_time_encodings(features: dict, ts: datetime) -> None:
     features["dayofweek_cos"] = math.cos(2 * math.pi * ts.weekday() / 7)
     features["month_sin"]     = math.sin(2 * math.pi * (ts.month - 1) / 12)
     features["month_cos"]     = math.cos(2 * math.pi * (ts.month - 1) / 12)
+
+
+def _add_current_value(features: dict, docs: list[MeasurementDocument], key: str) -> None:
+    """Store the most recent ok-quality reading under its canonical variable name."""
+    ok = [d for d in docs if d.quality_flag == "ok"]
+    if ok:
+        features[key] = sorted(ok, key=lambda d: d.measured_at)[-1].value
 
 
 def _fill_fraction(docs: list[MeasurementDocument]) -> float:
