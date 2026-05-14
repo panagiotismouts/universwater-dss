@@ -25,6 +25,7 @@ config.yaml ingestion.sources structure:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -136,6 +137,7 @@ def build_ingestion_scheduler(db: AsyncIOMotorDatabase) -> AsyncIOScheduler:
                 job_fn,
                 trigger="interval",
                 seconds=var_cfg.poll_interval_seconds,
+                next_run_time=datetime.now(tz=timezone.utc),
                 id=job_id,
                 name=job_id,
                 max_instances=1,    # prevent concurrent runs for same variable
