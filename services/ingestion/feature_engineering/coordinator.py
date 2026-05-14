@@ -23,7 +23,7 @@ Pipeline dispatch:
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -64,7 +64,7 @@ async def coordinate_feature_engineering(
 
     # Group by (pipeline, sensor_id) → latest measured_at
     latest_ts: dict[tuple[str, str], datetime] = defaultdict(
-        lambda: datetime.min.replace(tzinfo=None)
+        lambda: datetime.min.replace(tzinfo=timezone.utc)
     )
     for doc in ok_docs:
         if str(doc.pipeline) not in _FEATURE_PIPELINES:
