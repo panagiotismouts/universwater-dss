@@ -10,8 +10,6 @@ Both jobs use max_instances=1, coalesce=True to prevent overlap.
 
 from __future__ import annotations
 
-import asyncio
-
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -57,7 +55,8 @@ def build_ml_scheduler(db: AsyncIOMotorDatabase) -> AsyncIOScheduler:
     # ── Recalibration job ──────────────────────────────────────────────────
     cron_kwargs = _parse_cron(settings.recalibration_cron)
     scheduler.add_job(
-        func=lambda: asyncio.ensure_future(run_recalibration(db)),
+        func=run_recalibration,
+        args=[db],
         trigger=CronTrigger(timezone="UTC", **cron_kwargs),
         id="recalibration",
         name="Weekly recalibration",
@@ -69,7 +68,8 @@ def build_ml_scheduler(db: AsyncIOMotorDatabase) -> AsyncIOScheduler:
 
     # ── Prediction cycle job ───────────────────────────────────────────────
     scheduler.add_job(
-        func=lambda: asyncio.ensure_future(run_prediction_cycle(db)),
+        func=run_prediction_cycle,
+        args=[db],
         trigger=IntervalTrigger(seconds=settings.prediction_interval_seconds),
         id="prediction_cycle",
         name="Prediction cycle",
@@ -85,7 +85,8 @@ def build_ml_scheduler(db: AsyncIOMotorDatabase) -> AsyncIOScheduler:
 
     # ── Bootstrap check job ────────────────────────────────────────────────
     scheduler.add_job(
-        func=lambda: asyncio.ensure_future(run_bootstrap_if_needed(db)),
+        func=run_bootstrap_if_needed,
+        args=[db],
         trigger=IntervalTrigger(seconds=3600),
         id="bootstrap_check",
         name="Bootstrap check",
