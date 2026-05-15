@@ -8,10 +8,13 @@ to the correct pipeline-specific engineer, and writes FeatureDocuments.
 Only documents with processing_status="processed" are passed to feature
 engineering.  Failed readings are skipped (§H.1 boundary).
 
-Feature timestamp:
-  For each (pipeline, sensor_id) pair, the feature timestamp is the
-  measured_at of the most recent processed document in the batch.
-  This represents "we now have data up to this point in time".
+Feature timestamps:
+  For each (pipeline, sensor_id) pair, features are computed at 1-hour
+  intervals across the full time range of the batch, starting 6h after
+  the earliest measurement (to ensure enough data exists in the rolling
+  window).  This handles both the initial historical backfill (large batch
+  spanning months) and ongoing incremental polls (small batch spanning
+  15–60 min, producing 1 feature doc).
 
 Pipeline dispatch:
   "water"     → compute_water_features
@@ -22,8 +25,7 @@ Pipeline dispatch:
 
 from __future__ import annotations
 
-from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -62,25 +64,33 @@ async def coordinate_feature_engineering(
     if not ok_docs:
         return
 
-    # Group by (pipeline, sensor_id) → latest measured_at
-    latest_ts: dict[tuple[str, str], datetime] = defaultdict(
-        lambda: datetime.min.replace(tzinfo=timezone.utc)
-    )
+    # Find time range (min, max measured_at) per (pipeline, sensor_id)
+    _UNSET = datetime.min.replace(tzinfo=timezone.utc)
+    time_range: dict[tuple[str, str], list[datetime]] = {}
     for doc in ok_docs:
         if str(doc.pipeline) not in _FEATURE_PIPELINES:
             continue
         key = (str(doc.pipeline), doc.sensor_id)
-        if doc.measured_at > latest_ts[key]:
-            latest_ts[key] = doc.measured_at
+        if key not in time_range:
+            time_range[key] = [doc.measured_at, doc.measured_at]
+        else:
+            if doc.measured_at < time_range[key][0]:
+                time_range[key][0] = doc.measured_at
+            if doc.measured_at > time_range[key][1]:
+                time_range[key][1] = doc.measured_at
 
-    for (pipeline, sensor_id), feature_timestamp in latest_ts.items():
-        await _compute_and_persist(
-            pipeline=pipeline,
-            sensor_id=sensor_id,
-            feature_timestamp=feature_timestamp,
-            db=db,
-            repo=feature_repo,
-        )
+    _1H = timedelta(hours=1)
+    _6H = timedelta(hours=6)
+
+    for (pipeline, sensor_id), (batch_start, batch_end) in time_range.items():
+        # Start 6h in so the rolling window has enough historical data
+        ts = batch_start + _6H
+        while ts <= batch_end:
+            await _compute_and_persist(pipeline, sensor_id, ts, db, feature_repo)
+            ts += _1H
+        # Always compute for the very last measurement timestamp
+        if batch_end >= batch_start + _6H and batch_end != ts - _1H:
+            await _compute_and_persist(pipeline, sensor_id, batch_end, db, feature_repo)
 
 
 async def _compute_and_persist(

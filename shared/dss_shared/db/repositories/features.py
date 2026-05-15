@@ -57,7 +57,7 @@ class FeatureRepository(BaseRepository):
 
         result = await self.col.update_one(
             key,
-            {"$setOnInsert": raw_doc},
+            {"$set": raw_doc},
             upsert=True,
         )
         inserted = result.upserted_id is not None
