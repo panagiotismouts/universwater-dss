@@ -127,7 +127,7 @@ class CheckpointRepository(BaseRepository):
         now = _utc_now()
         update: dict = {"$set": {
             "last_run_at": now,
-            "last_run_status": str(status),
+            "last_run_status": status.value,
             "updated_at": now,
         }}
         if increment_failure:
