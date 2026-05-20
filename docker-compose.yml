@@ -14,8 +14,8 @@ services:
       start_period: 20s
     # MongoDB is intentionally not exposed on the host in production.
     # Uncomment the line below for local development access (e.g. MongoDB Compass):
-    # ports:
-    #   - "27017:27017"
+    ports:
+      - "27017:27017"
 
   # ── Ingestion service ──────────────────────────────────────────────────────
   ingestion:

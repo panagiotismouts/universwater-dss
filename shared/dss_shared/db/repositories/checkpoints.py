@@ -23,8 +23,11 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from dss_shared.db.collections import CHECKPOINTS
 from dss_shared.db.repositories.base import BaseRepository
+from dss_shared.logging import get_logger
 from dss_shared.schemas.checkpoint import CheckpointDocument
 from dss_shared.schemas.enums import DataSource, IngestionRunStatus, Pipeline
+
+log = get_logger(__name__)
 
 
 def _utc_now() -> datetime:
@@ -59,7 +62,17 @@ class CheckpointRepository(BaseRepository):
         )
         if raw is None:
             return None
-        return self._from_doc(raw, CheckpointDocument)
+        try:
+            return self._from_doc(raw, CheckpointDocument)
+        except Exception as exc:
+            log.warning(
+                "checkpoint_document_invalid",
+                source=str(source),
+                pipeline=str(pipeline),
+                variable_name=variable_name,
+                error=str(exc),
+            )
+            return None
 
     async def get_last_fetched_at(
         self,

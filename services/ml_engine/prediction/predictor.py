@@ -140,35 +140,18 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
                 log.error("prediction_model_predict_failed", sensor_id=sensor_id, error=str(exc))
                 continue
 
-            # XAI explanation
-            xai_doc: Optional[XAIResultDocument] = None
+            # XAI — compute raw explanation values first (before prediction insert)
+            # The XAIResultDocument is built after insert so we have the real pred_id.
+            xai_explanation: Optional[dict] = None
             top_shap: list[TopShapFeature] = []
 
             if settings.enable_xai:
                 try:
                     explainer = get_explainer(active.model_family)
-                    explanation = explainer.explain(model, x_row, active.feature_names)
+                    xai_explanation = explainer.explain(model, x_row, active.feature_names)
 
-                    shap_vals: dict[str, float] = explanation["shap_values"]
-                    base_value: float = explanation["base_value"]
-                    feat_vals: dict[str, float] = explanation["feature_values"]
-                    explainer_type_str: str = explanation["explainer_type"]
-
-                    xai_doc = XAIResultDocument(
-                        prediction_id="placeholder",   # back-filled after prediction insert
-                        model_id=active.model_id,
-                        pipeline=Pipeline(pipeline),
-                        sensor_id=sensor_id,
-                        input_feature_timestamp=feat_doc.feature_timestamp,
-                        explainer_type=ExplainerType(explainer_type_str),
-                        base_value=base_value,
-                        shap_values=shap_vals,
-                        feature_input_values=feat_vals,
-                        shap_sum_check=sum(shap_vals.values()) + base_value,
-                        generated_at=now,
-                    )
-
-                    # Top-N SHAP summary
+                    shap_vals: dict[str, float] = xai_explanation["shap_values"]
+                    feat_vals: dict[str, float] = xai_explanation["feature_values"]
                     sorted_shap = sorted(shap_vals.items(), key=lambda kv: abs(kv[1]), reverse=True)
                     top_shap = [
                         TopShapFeature(
@@ -178,11 +161,10 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
                         )
                         for fname, fval in sorted_shap[:top_n]
                     ]
-
                 except Exception as exc:
                     log.warning("prediction_xai_failed", sensor_id=sensor_id, error=str(exc))
 
-            # Persist prediction first to get its _id
+            # Persist prediction to get its real _id
             pred_doc = PredictionDocument(
                 pipeline=Pipeline(pipeline),
                 sensor_id=sensor_id,
@@ -193,19 +175,33 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
                 model_id=active.model_id,
                 model_type=ModelType(active.model_type),
                 model_family=ModelFamily(active.model_family),
-                xai_result_id="000000000000000000000000",  # placeholder; updated after xai insert
+                xai_result_id="000000000000000000000000",
                 top_shap_features=top_shap,
                 prediction_generated_at=now,
             )
             pred_id = await pred_repo.insert(pred_doc)
 
-            # If XAI was computed, persist the XAI doc with real prediction_id,
-            # then back-fill xai_result_id on the prediction document.
-            if pred_id and settings.enable_xai and xai_doc is not None:
-                xai_doc.prediction_id = pred_id
-                xai_result_id = await xai_repo.insert(xai_doc)
-                if xai_result_id:
-                    await pred_repo.update_xai_result_id(pred_id, xai_result_id)
+            # Build and persist XAI doc now that we have the real prediction _id
+            if pred_id and settings.enable_xai and xai_explanation is not None:
+                try:
+                    xai_doc = XAIResultDocument(
+                        prediction_id=pred_id,
+                        model_id=active.model_id,
+                        pipeline=Pipeline(pipeline),
+                        sensor_id=sensor_id,
+                        input_feature_timestamp=feat_doc.feature_timestamp,
+                        explainer_type=ExplainerType(xai_explanation["explainer_type"]),
+                        base_value=xai_explanation["base_value"],
+                        shap_values=xai_explanation["shap_values"],
+                        feature_input_values=xai_explanation["feature_values"],
+                        shap_sum_check=sum(xai_explanation["shap_values"].values()) + xai_explanation["base_value"],
+                        generated_at=now,
+                    )
+                    xai_result_id = await xai_repo.insert(xai_doc)
+                    if xai_result_id:
+                        await pred_repo.update_xai_result_id(pred_id, xai_result_id)
+                except Exception as exc:
+                    log.warning("prediction_xai_persist_failed", sensor_id=sensor_id, error=str(exc))
 
             log.debug(
                 "prediction_written",

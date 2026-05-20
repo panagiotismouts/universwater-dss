@@ -30,11 +30,13 @@ class LinearExplainerWrapper(BaseExplainer):
 
         inner = getattr(model, "_model", model)
 
-        # LinearExplainer requires masker; use mean-of-training approximation
-        # with feature_perturbation="interventional" for correlation-robust values.
+        # Use zero background so SHAP values represent each feature's contribution
+        # relative to a baseline of all-zero inputs.  This avoids the degenerate case
+        # where using the input itself as the masker makes all SHAP values zero.
+        background = np.zeros((1, row.shape[1]))
         explainer = shap.LinearExplainer(
             inner,
-            masker=shap.maskers.Independent(row),  # single-row fallback masker
+            masker=shap.maskers.Independent(background),
             feature_perturbation="interventional",
         )
         shap_values = explainer.shap_values(row)   # shape (1, n_features)

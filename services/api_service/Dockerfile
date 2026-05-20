@@ -26,7 +26,8 @@ COPY scripts/ ./scripts/
 ENV DSS_CONFIG_PATH=/app/config/config.yaml \
     DSS_ENV=docker \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app
 
 EXPOSE 8000
 

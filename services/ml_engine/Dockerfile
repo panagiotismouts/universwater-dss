@@ -25,6 +25,7 @@ COPY config/config.yaml ./config/config.yaml
 ENV DSS_CONFIG_PATH=/app/config/config.yaml \
     DSS_ENV=docker \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app
 
 CMD ["python", "-m", "services.ml_engine.main"]

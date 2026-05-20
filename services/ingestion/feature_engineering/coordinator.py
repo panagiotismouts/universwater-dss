@@ -83,13 +83,16 @@ async def coordinate_feature_engineering(
     _6H = timedelta(hours=6)
 
     for (pipeline, sensor_id), (batch_start, batch_end) in time_range.items():
-        # Start 6h in so the rolling window has enough historical data
+        # For large historical batches: iterate hourly from batch_start+6h to batch_end.
+        # The 6h offset ensures the rolling window has enough historical data on first run.
         ts = batch_start + _6H
         while ts <= batch_end:
             await _compute_and_persist(pipeline, sensor_id, ts, db, feature_repo)
             ts += _1H
-        # Always compute for the very last measurement timestamp
-        if batch_end >= batch_start + _6H and batch_end != ts - _1H:
+        # Always compute for batch_end itself.
+        # For small incremental batches (< 6h), this is the only feature generated.
+        # Historical data already in MongoDB satisfies the rolling window requirement.
+        if batch_end != ts - _1H:
             await _compute_and_persist(pipeline, sensor_id, batch_end, db, feature_repo)
 
 

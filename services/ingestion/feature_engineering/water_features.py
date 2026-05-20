@@ -44,7 +44,7 @@ log = get_logger(__name__)
 
 FEATURE_SCHEMA_VERSION = "water_v1"
 
-MIN_WATER_READINGS = 2   # minimum 'ph' readings in 1h window
+MIN_WATER_READINGS = 1   # minimum 'ph' readings in 1h window (aquaread_1/hcmr send ≤1/hour)
 
 # UOWM meteorological sensor IDs (numeric string, as stored in MongoDB)
 _MET_SENSOR_AIR_TEMP = "142"

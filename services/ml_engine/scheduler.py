@@ -10,6 +10,8 @@ Both jobs use max_instances=1, coalesce=True to prevent overlap.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -66,11 +68,14 @@ def build_ml_scheduler(db: AsyncIOMotorDatabase) -> AsyncIOScheduler:
     )
     log.info("ml_scheduler_job_registered", job="recalibration", cron=settings.recalibration_cron)
 
+    now = datetime.now(tz=timezone.utc)
+
     # ── Prediction cycle job ───────────────────────────────────────────────
     scheduler.add_job(
         func=run_prediction_cycle,
         args=[db],
         trigger=IntervalTrigger(seconds=settings.prediction_interval_seconds),
+        next_run_time=now,
         id="prediction_cycle",
         name="Prediction cycle",
         max_instances=1,
@@ -88,6 +93,7 @@ def build_ml_scheduler(db: AsyncIOMotorDatabase) -> AsyncIOScheduler:
         func=run_bootstrap_if_needed,
         args=[db],
         trigger=IntervalTrigger(seconds=3600),
+        next_run_time=now,
         id="bootstrap_check",
         name="Bootstrap check",
         max_instances=1,

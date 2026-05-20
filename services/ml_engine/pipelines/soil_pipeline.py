@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 @dataclass
 class SoilPipelineConfig:
     pipeline_name: str = "soil"
-    target_variable: str = "soil_moisture"
+    target_variable: str = "soil_temperature"
     feature_schema_version: str = "soil_v1"
     model_types: list[str] = field(default_factory=lambda: ["xgboost", "ridge_regression"])
     sensor_ids: list[str] = field(default_factory=list)

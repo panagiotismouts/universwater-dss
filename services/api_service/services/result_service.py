@@ -81,7 +81,7 @@ async def _build_prediction_object(
 
     # ── XAI block ─────────────────────────────────────────────────────────
     xai_repo = XAIResultRepository(db)
-    xai_doc = await xai_repo.find_by_prediction_id(str(doc.xai_result_id))
+    xai_doc = await xai_repo.find_by_prediction_id(str(doc.id)) if doc.id else None
 
     top_features = [
         XAITopFeature(

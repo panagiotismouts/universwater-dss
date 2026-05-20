@@ -42,7 +42,7 @@ from services.ingestion.normalizer import normalize_uowm_met
 log = get_logger(__name__)
 
 _RETRY_BACKOFF_SECONDS = 2.0
-_PAGE_LIMIT = 10000
+_PAGE_LIMIT = 500  # UOWM server truncates responses above ~109 KB (~780 records)
 
 
 def _load_uowm_sensor_id(variable_name: str) -> int | None:
@@ -73,13 +73,16 @@ class UOWMMetClient(BaseAPIClient):
         url = f"{base}/sensors/{sensor_id}/data"
 
         all_rows: list[dict[str, Any]] = []
-        cursor_start = int(since.timestamp())
-        end_ts = int(now.timestamp())
+        start_ts = int(since.timestamp())
+        end_cursor = int(now.timestamp())
 
+        # The UOWM API returns records sorted DESC (newest first).
+        # Paginate backward: each page moves end_cursor to just before the
+        # oldest record in the previous page.
         while True:
             params = {
-                "start_time": str(cursor_start),
-                "end_time": str(end_ts),
+                "start_time": str(start_ts),
+                "end_time": str(end_cursor),
                 "limit": str(_PAGE_LIMIT),
             }
             rows = await self._get_with_retry(url, params, settings, variable_name)
@@ -89,9 +92,9 @@ class UOWMMetClient(BaseAPIClient):
             all_rows.extend(rows)
 
             if len(rows) < _PAGE_LIMIT:
-                break   # last page
-            # advance cursor past the latest record
-            cursor_start = max(r["timestamp"] for r in rows) + 1
+                break   # last page (fewer records than limit)
+            # Move end_cursor backward past the oldest record on this page
+            end_cursor = min(r["timestamp"] for r in rows) - 1
 
         readings = normalize_uowm_met(
             rows=all_rows,
