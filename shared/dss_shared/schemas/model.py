@@ -105,6 +105,9 @@ class ModelRegistryDocument(MongoDocument):
     # Artifact
     artifact_path: str = Field(..., min_length=1)
 
+    # Feature pipeline override (WQI sub-pipelines store features under "water")
+    feature_pipeline: Optional[str] = None
+
     # Embedded metrics (fast read path)
     metrics_summary: EmbeddedMetricsSummary
 

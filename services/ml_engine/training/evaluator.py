@@ -52,6 +52,7 @@ async def evaluate_model(
     validation_window_end: datetime,
     evaluation_type: EvaluationType = EvaluationType.VALIDATION,
     baseline_model_id: str | None = None,
+    min_r2_override: float | None = None,
 ) -> ModelMetricsDocument:
     """
     Compute metrics, check gate thresholds, write model_metrics document.
@@ -79,7 +80,7 @@ async def evaluate_model(
     # ── Load thresholds from config ────────────────────────────────────────
     raw = get_raw_yaml()
     thresholds = raw.get("training", {}).get("metric_thresholds", {})
-    min_r2           = float(thresholds.get("min_r2", 0.75))
+    min_r2 = min_r2_override if min_r2_override is not None else float(thresholds.get("min_r2", 0.75))
     max_mae_relative = float(thresholds.get("max_mae_relative", 0.15))
 
     value_range = float(np.max(y_val) - np.min(y_val)) if len(y_val) > 1 else 1.0

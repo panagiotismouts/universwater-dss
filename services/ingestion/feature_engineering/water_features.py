@@ -51,9 +51,14 @@ _MET_SENSOR_AIR_TEMP = "142"
 _MET_SENSOR_RAINFALL = "144"
 _MET_SENSOR_HUMIDITY = "145"
 
-_1H = timedelta(hours=1)
-_3H = timedelta(hours=3)
-_6H = timedelta(hours=6)
+_1H   = timedelta(hours=1)
+_3H   = timedelta(hours=3)
+_6H   = timedelta(hours=6)
+_168H = timedelta(hours=168)  # 7-day window required by CCME-WQI
+
+# ── CCME-WQI EU WFD thresholds (eutrophic freshwater lake) ────────────────────
+# Same values as hcmr_analysis/wqi.py _CCME_OBJECTIVES
+_CCME_MIN_OBS = 6  # minimum complete observations needed to compute CCME
 
 
 async def compute_water_features(
@@ -68,7 +73,7 @@ async def compute_water_features(
     Returns None if there is insufficient data.
     """
     repo = MeasurementRepository(db)
-    window_start = feature_timestamp - _6H
+    window_start = feature_timestamp - _168H  # extended for CCME 7-day window
 
     ph_docs   = await repo.find_window("water", sensor_id, "ph",               window_start, feature_timestamp)
     do_docs   = await repo.find_window("water", sensor_id, "dissolved_oxygen",  window_start, feature_timestamp)
@@ -117,6 +122,11 @@ async def compute_water_features(
     _add_rolling(features, airtemp_docs, feature_timestamp, "air_temp",  _1H, _3H)
     _add_rolling(features, humid_docs,   feature_timestamp, "humidity",  _1H)
     _add_time_encodings(features, feature_timestamp)
+
+    # ── WQI targets (stored as features so ML pipelines can use them as y) ──
+    features["wqi_brown"]   = _compute_wqi_brown(ph_docs, do_docs, temp_docs, cond_docs, orp_docs, feature_timestamp)
+    features["wqi_ccme"]    = _compute_wqi_ccme(ph_docs, do_docs, temp_docs, cond_docs, orp_docs)
+    features["wqi_entropy"] = _compute_wqi_entropy(ph_docs, do_docs, temp_docs, cond_docs, orp_docs, feature_timestamp)
 
     # Drop non-computable features (None values) before writing
     final_features: dict[str, float] = {k: v for k, v in features.items() if v is not None}
@@ -208,3 +218,181 @@ def _fill_fraction(docs: list[MeasurementDocument]) -> float:
     if not docs:
         return 0.0
     return sum(1 for d in docs if d.filled) / len(docs)
+
+
+# ── WQI computation helpers ────────────────────────────────────────────────────
+# Formulas mirror hcmr_analysis/wqi.py exactly.  All return float | None.
+# None is written when inputs are insufficient; dataset_builder skips those rows.
+
+def _latest_ok(docs: list[MeasurementDocument]) -> Optional[float]:
+    ok = [d for d in docs if d.quality_flag == "ok"]
+    if not ok:
+        return None
+    return sorted(ok, key=lambda d: d.measured_at)[-1].value
+
+
+def _compute_wqi_brown(
+    ph_docs, do_docs, temp_docs, cond_docs, orp_docs,
+    feature_timestamp: datetime,
+) -> Optional[float]:
+    ph   = _latest_ok(_in_window(ph_docs,   feature_timestamp, _1H))
+    do_  = _latest_ok(_in_window(do_docs,   feature_timestamp, _1H))
+    temp = _latest_ok(_in_window(temp_docs, feature_timestamp, _1H))
+    cond = _latest_ok(_in_window(cond_docs, feature_timestamp, _1H))
+    orp  = _latest_ok(_in_window(orp_docs,  feature_timestamp, _1H))
+
+    if any(v is None for v in (ph, do_, temp, cond, orp)):
+        return None
+
+    qi_do   = min(do_ / 9.0 * 100.0, 100.0)
+    qi_ph   = max(100.0 - abs(ph - 7.0) / 1.5 * 100.0, 0.0)
+    qi_temp = max(100.0 - abs(temp - 20.0) / 15.0 * 100.0, 0.0)
+    qi_cond = max(100.0 - cond / 1000.0 * 100.0, 0.0)
+    qi_orp  = max(100.0 - abs(orp - 300.0) / 300.0 * 100.0, 0.0)
+    return (5 * qi_do + 3 * qi_ph + 2 * qi_temp + 2 * qi_cond + 1 * qi_orp) / 13.0
+
+
+def _compute_wqi_ccme(
+    ph_docs, do_docs, temp_docs, cond_docs, orp_docs,
+) -> Optional[float]:
+    """CCME-WQI over the full 168-h window already loaded."""
+    # EU WFD thresholds for eutrophic freshwater lake (mirrors hcmr_analysis/wqi.py)
+    objectives = {
+        "ph":       ("range", 6.5, 10.0),
+        "do":       ("min",   4.0),
+        "cond":     ("range", 50.0, 750.0),
+        "temp":     ("max",   28.0),
+        "orp":      ("min",   200.0),
+    }
+    param_docs = {
+        "ph":   ph_docs,
+        "do":   do_docs,
+        "cond": cond_docs,
+        "temp": temp_docs,
+        "orp":  orp_docs,
+    }
+
+    total_tests = 0
+    total_fails = 0
+    total_exc   = 0.0
+    failed_vars = 0
+
+    for key, obj in objectives.items():
+        vals = [d.value for d in param_docs[key] if d.quality_flag == "ok"]
+        if not vals:
+            continue
+        kind = obj[0]
+        n_fail = 0
+        exc_sum = 0.0
+        for v in vals:
+            if kind == "min":
+                limit = obj[1]
+                if v < limit:
+                    n_fail += 1
+                    exc_sum += (limit / max(v, 1e-9)) - 1.0
+            elif kind == "max":
+                limit = obj[1]
+                if v > limit:
+                    n_fail += 1
+                    exc_sum += v / limit - 1.0
+            else:  # range
+                lo, hi = obj[1], obj[2]
+                if v < lo:
+                    n_fail += 1
+                    exc_sum += (lo / max(v, 1e-9)) - 1.0
+                elif v > hi:
+                    n_fail += 1
+                    exc_sum += v / hi - 1.0
+        total_tests += len(vals)
+        total_fails += n_fail
+        total_exc   += exc_sum
+        if n_fail > 0:
+            failed_vars += 1
+
+    complete_obs = min(
+        len([d for d in ph_docs   if d.quality_flag == "ok"]),
+        len([d for d in do_docs   if d.quality_flag == "ok"]),
+        len([d for d in temp_docs if d.quality_flag == "ok"]),
+        len([d for d in cond_docs if d.quality_flag == "ok"]),
+        len([d for d in orp_docs  if d.quality_flag == "ok"]),
+    )
+    if complete_obs < _CCME_MIN_OBS or total_tests == 0:
+        return None
+
+    n_vars = len(objectives)
+    F1 = (failed_vars / n_vars) * 100.0
+    F2 = (total_fails / total_tests) * 100.0
+    nse = total_exc / total_tests
+    F3  = nse / (0.01 * nse + 0.01)
+    ccme = 100.0 - (math.sqrt(F1**2 + F2**2 + F3**2) / 1.732)
+    return max(0.0, min(100.0, ccme))
+
+
+def _compute_wqi_entropy(
+    ph_docs, do_docs, temp_docs, cond_docs, orp_docs,
+    feature_timestamp: datetime,
+) -> Optional[float]:
+    """Entropy-weighted WQI (Wang et al. 2017).
+
+    Weights are derived from Shannon entropy of each parameter's Qi distribution
+    across the 168-h rolling window already loaded.  The current-hour Qi values
+    are then combined using those window-derived weights.
+    """
+    # Current-hour Qi values (point-in-time prediction target)
+    ph_cur   = _latest_ok(_in_window(ph_docs,   feature_timestamp, _1H))
+    do_cur   = _latest_ok(_in_window(do_docs,   feature_timestamp, _1H))
+    temp_cur = _latest_ok(_in_window(temp_docs, feature_timestamp, _1H))
+    cond_cur = _latest_ok(_in_window(cond_docs, feature_timestamp, _1H))
+    orp_cur  = _latest_ok(_in_window(orp_docs,  feature_timestamp, _1H))
+
+    if any(v is None for v in (ph_cur, do_cur, temp_cur, cond_cur, orp_cur)):
+        return None
+
+    def _qi_series(docs, fn) -> list[float]:
+        return [fn(d.value) for d in docs if d.quality_flag == "ok"]
+
+    param_qi: dict[str, list[float]] = {
+        "do":   _qi_series(do_docs,   lambda v: min(v / 9.0 * 100.0, 100.0)),
+        "ph":   _qi_series(ph_docs,   lambda v: max(100.0 - abs(v - 7.0) / 1.5 * 100.0, 0.0)),
+        "temp": _qi_series(temp_docs, lambda v: max(100.0 - abs(v - 20.0) / 15.0 * 100.0, 0.0)),
+        "cond": _qi_series(cond_docs, lambda v: max(100.0 - v / 1000.0 * 100.0, 0.0)),
+        "orp":  _qi_series(orp_docs,  lambda v: max(100.0 - abs(v - 300.0) / 300.0 * 100.0, 0.0)),
+    }
+
+    # Need at least 2 observations per parameter to compute entropy meaningfully
+    if any(len(s) < 2 for s in param_qi.values()):
+        equal_w = 1.0 / 5
+        qi_cur = {
+            "do":   min(do_cur / 9.0 * 100.0, 100.0),
+            "ph":   max(100.0 - abs(ph_cur - 7.0) / 1.5 * 100.0, 0.0),
+            "temp": max(100.0 - abs(temp_cur - 20.0) / 15.0 * 100.0, 0.0),
+            "cond": max(100.0 - cond_cur / 1000.0 * 100.0, 0.0),
+            "orp":  max(100.0 - abs(orp_cur - 300.0) / 300.0 * 100.0, 0.0),
+        }
+        return sum(equal_w * v for v in qi_cur.values())
+
+    # Shannon entropy per parameter (Wang et al. 2017)
+    eps = 1e-12
+    divergences: dict[str, float] = {}
+    for key, series in param_qi.items():
+        col_sum = sum(series) or eps
+        p_vals  = [v / col_sum for v in series]
+        n_obs   = len(p_vals)
+        ln_n    = math.log(n_obs)
+        entropy = -(sum(p * math.log(p + eps) for p in p_vals)) / ln_n
+        divergences[key] = max(1.0 - entropy, 0.0)
+
+    div_total = sum(divergences.values())
+    if div_total < 1e-12:
+        weights = {k: 1.0 / 5 for k in divergences}
+    else:
+        weights = {k: v / div_total for k, v in divergences.items()}
+
+    qi_cur = {
+        "do":   min(do_cur / 9.0 * 100.0, 100.0),
+        "ph":   max(100.0 - abs(ph_cur - 7.0) / 1.5 * 100.0, 0.0),
+        "temp": max(100.0 - abs(temp_cur - 20.0) / 15.0 * 100.0, 0.0),
+        "cond": max(100.0 - cond_cur / 1000.0 * 100.0, 0.0),
+        "orp":  max(100.0 - abs(orp_cur - 300.0) / 300.0 * 100.0, 0.0),
+    }
+    return sum(weights[k] * qi_cur[k] for k in qi_cur)

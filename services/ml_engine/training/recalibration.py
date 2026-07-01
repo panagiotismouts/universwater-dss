@@ -31,7 +31,10 @@ from dss_shared.schemas.model import EmbeddedMetricsSummary, ModelRegistryDocume
 from services.ml_engine.artifact_store import ArtifactStore
 from services.ml_engine.models.registry import instantiate_model
 from services.ml_engine.pipelines.soil_pipeline import SOIL_PIPELINE
-from services.ml_engine.pipelines.water_pipeline import WATER_PIPELINE
+from services.ml_engine.pipelines.water_pipeline import WATER_PIPELINE  # kept for reference
+from services.ml_engine.pipelines.water_wqi_brown_pipeline import WATER_WQI_BROWN_PIPELINE
+from services.ml_engine.pipelines.water_wqi_ccme_pipeline import WATER_WQI_CCME_PIPELINE
+from services.ml_engine.pipelines.water_wqi_entropy_pipeline import WATER_WQI_ENTROPY_PIPELINE
 from services.ml_engine.registry_manager import (
     activate_model,
     find_active_model,
@@ -44,7 +47,12 @@ from services.ml_engine.training.evaluator import evaluate_model
 
 log = get_logger(__name__)
 
-_ENABLED_PIPELINES = [WATER_PIPELINE, SOIL_PIPELINE]
+_ENABLED_PIPELINES = [
+    WATER_WQI_BROWN_PIPELINE,
+    WATER_WQI_CCME_PIPELINE,
+    WATER_WQI_ENTROPY_PIPELINE,
+    SOIL_PIPELINE,
+]
 _TRAIN_RATIO = 0.8
 
 
@@ -72,7 +80,7 @@ async def run_recalibration(db: AsyncIOMotorDatabase) -> None:
 
     for pipeline_cfg in _ENABLED_PIPELINES:
         pipeline_name = pipeline_cfg.pipeline_name
-        if pipeline_name == "water" and not settings.enable_water_pipeline:
+        if (pipeline_name == "water" or pipeline_name.startswith("water_wqi")) and not settings.enable_water_pipeline:
             continue
         if pipeline_name == "soil" and not settings.enable_soil_pipeline:
             continue
@@ -99,7 +107,9 @@ async def _recalibrate_pipeline(db, pipeline_cfg, start: datetime, end: datetime
 
     try:
         X, y, feature_names = await build_dataset(
-            db, pipeline, start, end, schema_version, target
+            db, pipeline, start, end, schema_version, target,
+            feature_pipeline=getattr(pipeline_cfg, "feature_pipeline", None),
+            excluded_features=getattr(pipeline_cfg, "excluded_features", None),
         )
     except ValueError as exc:
         log.warning("recalibration_dataset_insufficient", pipeline=pipeline, error=str(exc))
@@ -139,6 +149,7 @@ async def _recalibrate_pipeline(db, pipeline_cfg, start: datetime, end: datetime
             validation_window_end=end,
             evaluation_type=EvaluationType.RECALIBRATION_CHECK,
             baseline_model_id=baseline_model_id,
+            min_r2_override=getattr(pipeline_cfg, "min_r2_threshold", None),
         )
 
         m = metrics_doc.metrics
@@ -162,6 +173,7 @@ async def _recalibrate_pipeline(db, pipeline_cfg, start: datetime, end: datetime
             metrics_summary=summary,
             status=ModelStatus.CANDIDATE,
             trained_at=end,
+            feature_pipeline=getattr(pipeline_cfg, "feature_pipeline", None),
         )
         await insert_candidate(db, candidate)
 

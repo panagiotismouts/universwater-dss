@@ -26,7 +26,10 @@ from dss_shared.schemas.model import EmbeddedMetricsSummary, ModelRegistryDocume
 from services.ml_engine.artifact_store import ArtifactStore
 from services.ml_engine.models.registry import instantiate_model
 from services.ml_engine.pipelines.soil_pipeline import SOIL_PIPELINE
-from services.ml_engine.pipelines.water_pipeline import WATER_PIPELINE
+from services.ml_engine.pipelines.water_pipeline import WATER_PIPELINE  # kept for reference
+from services.ml_engine.pipelines.water_wqi_brown_pipeline import WATER_WQI_BROWN_PIPELINE
+from services.ml_engine.pipelines.water_wqi_ccme_pipeline import WATER_WQI_CCME_PIPELINE
+from services.ml_engine.pipelines.water_wqi_entropy_pipeline import WATER_WQI_ENTROPY_PIPELINE
 from services.ml_engine.registry_manager import (
     activate_model,
     has_active_model,
@@ -38,7 +41,12 @@ from services.ml_engine.training.evaluator import evaluate_model
 
 log = get_logger(__name__)
 
-_ENABLED_PIPELINES = [WATER_PIPELINE, SOIL_PIPELINE]
+_ENABLED_PIPELINES = [
+    WATER_WQI_BROWN_PIPELINE,
+    WATER_WQI_CCME_PIPELINE,
+    WATER_WQI_ENTROPY_PIPELINE,
+    SOIL_PIPELINE,
+]
 _TRAIN_RATIO = 0.8
 
 
@@ -67,7 +75,7 @@ async def run_bootstrap_if_needed(db: AsyncIOMotorDatabase) -> None:
         pipeline_name = pipeline_cfg.pipeline_name
 
         # Skip disabled pipelines
-        if pipeline_name == "water" and not settings.enable_water_pipeline:
+        if (pipeline_name == "water" or pipeline_name.startswith("water_wqi")) and not settings.enable_water_pipeline:
             continue
         if pipeline_name == "soil" and not settings.enable_soil_pipeline:
             continue
@@ -89,7 +97,9 @@ async def _run_bootstrap_for_pipeline(db, pipeline_cfg, start: datetime, end: da
 
     try:
         X, y, feature_names = await build_dataset(
-            db, pipeline, start, end, schema_version, target
+            db, pipeline, start, end, schema_version, target,
+            feature_pipeline=getattr(pipeline_cfg, "feature_pipeline", None),
+            excluded_features=getattr(pipeline_cfg, "excluded_features", None),
         )
     except ValueError as exc:
         log.warning("bootstrap_dataset_insufficient", pipeline=pipeline, error=str(exc))
@@ -129,6 +139,8 @@ async def _run_bootstrap_for_pipeline(db, pipeline_cfg, start: datetime, end: da
             val_start=val_start,
             val_end=val_end,
             store=store,
+            feature_pipeline=getattr(pipeline_cfg, "feature_pipeline", None),
+            min_r2_threshold=getattr(pipeline_cfg, "min_r2_threshold", None),
         )
         if result is not None:
             candidates.append(result)
@@ -163,6 +175,8 @@ async def _train_and_register(
     val_start: datetime,
     val_end: datetime,
     store: ArtifactStore,
+    feature_pipeline: str | None = None,
+    min_r2_threshold: float | None = None,
 ) -> "tuple[str, float, object, str] | None":
     """Train and register one model type. Returns (model_id, r2, model, artifact_rel)
     if the metric gate passes, or None if rejected."""
@@ -186,6 +200,7 @@ async def _train_and_register(
         validation_window_start=val_start,
         validation_window_end=val_end,
         evaluation_type=EvaluationType.VALIDATION,
+        min_r2_override=min_r2_threshold,
     )
 
     m = metrics_doc.metrics
@@ -212,6 +227,7 @@ async def _train_and_register(
         metrics_summary=summary,
         status=ModelStatus.CANDIDATE,
         trained_at=now,
+        feature_pipeline=feature_pipeline,
     )
     await insert_candidate(db, candidate)
 

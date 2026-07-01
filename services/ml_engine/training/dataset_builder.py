@@ -38,6 +38,8 @@ async def build_dataset(
     end: datetime,
     feature_schema_version: str,
     target_variable: str,
+    feature_pipeline: str | None = None,
+    excluded_features: list[str] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """
     Load and assemble a feature matrix for training.
@@ -60,7 +62,7 @@ async def build_dataset(
         ValueError: If fewer than _MIN_TRAINING_ROWS valid rows are available.
     """
     repo = FeatureRepository(db)
-    docs = await repo.find_training_window(pipeline, start, end, feature_schema_version)
+    docs = await repo.find_training_window(feature_pipeline or pipeline, start, end, feature_schema_version)
     log.debug(
         "dataset_builder_docs_loaded",
         pipeline=pipeline,
@@ -78,7 +80,8 @@ async def build_dataset(
     # Determine the full, sorted list of non-target feature names from the first doc
     # then verify consistency across all docs.
     first_features = docs[0].features
-    all_feature_keys = sorted(k for k in first_features if k != target_variable)
+    _excluded = set(excluded_features or []) | {target_variable}
+    all_feature_keys = sorted(k for k in first_features if k not in _excluded)
 
     if not all_feature_keys:
         raise ValueError(

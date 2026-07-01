@@ -28,6 +28,9 @@ class Pipeline(str, Enum):
     """
     WATER = "water"
     SOIL = "soil"
+    WATER_WQI_BROWN   = "water_wqi_brown"
+    WATER_WQI_CCME    = "water_wqi_ccme"
+    WATER_WQI_ENTROPY = "water_wqi_entropy"
     MET_WATER = "met_water"
     MET_SOIL = "met_soil"
 

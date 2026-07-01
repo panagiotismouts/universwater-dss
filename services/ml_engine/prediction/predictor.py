@@ -43,13 +43,21 @@ from dss_shared.schemas.xai import XAIResultDocument
 from services.ml_engine.artifact_store import ArtifactStore
 from services.ml_engine.models.registry import get_model_class
 from services.ml_engine.pipelines.soil_pipeline import SOIL_PIPELINE
-from services.ml_engine.pipelines.water_pipeline import WATER_PIPELINE
+from services.ml_engine.pipelines.water_pipeline import WATER_PIPELINE  # kept for reference
+from services.ml_engine.pipelines.water_wqi_brown_pipeline import WATER_WQI_BROWN_PIPELINE
+from services.ml_engine.pipelines.water_wqi_ccme_pipeline import WATER_WQI_CCME_PIPELINE
+from services.ml_engine.pipelines.water_wqi_entropy_pipeline import WATER_WQI_ENTROPY_PIPELINE
 from services.ml_engine.registry_manager import find_active_model
 from services.ml_engine.xai.registry import get_explainer
 
 log = get_logger(__name__)
 
-_ENABLED_PIPELINES = [WATER_PIPELINE, SOIL_PIPELINE]
+_ENABLED_PIPELINES = [
+    WATER_WQI_BROWN_PIPELINE,
+    WATER_WQI_CCME_PIPELINE,
+    WATER_WQI_ENTROPY_PIPELINE,
+    SOIL_PIPELINE,
+]
 
 
 def _utc_now() -> datetime:
@@ -86,7 +94,7 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
     for pipeline_cfg in _ENABLED_PIPELINES:
         pipeline = pipeline_cfg.pipeline_name
 
-        if pipeline == "water" and not settings.enable_water_pipeline:
+        if (pipeline == "water" or pipeline.startswith("water_wqi")) and not settings.enable_water_pipeline:
             continue
         if pipeline == "soil" and not settings.enable_soil_pipeline:
             continue
@@ -105,7 +113,8 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
             log.error("prediction_artifact_load_failed", pipeline=pipeline, model_id=active.model_id, error=str(exc))
             continue
 
-        sensor_ids = await _discover_sensors(db, pipeline, active.feature_schema_version)
+        feature_pl = active.feature_pipeline or pipeline
+        sensor_ids = await _discover_sensors(db, feature_pl, active.feature_schema_version)
         if not sensor_ids:
             log.warning("prediction_no_feature_vectors", pipeline=pipeline)
             continue
@@ -115,7 +124,7 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
 
         for sensor_id in sensor_ids:
             feat_doc = await feat_repo.find_latest_for_prediction(
-                pipeline=pipeline,
+                pipeline=feature_pl,
                 sensor_id=sensor_id,
                 feature_schema_version=active.feature_schema_version,
             )
