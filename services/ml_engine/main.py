@@ -27,6 +27,7 @@ from dss_shared.config import get_settings
 from dss_shared.db import get_database, probe_mongo
 from dss_shared.logging import setup_logging, get_logger
 
+from services.ml_engine.prediction.predictor import run_historical_backfill
 from services.ml_engine.scheduler import build_ml_scheduler
 from services.ml_engine.training.bootstrap import run_bootstrap_if_needed
 
@@ -51,6 +52,9 @@ async def main() -> None:
 
     # 2. Bootstrap detection (blocking before scheduler starts)
     await run_bootstrap_if_needed(db)
+
+    # 2b. Backfill historical predictions for any active pipeline with no history
+    await run_historical_backfill(db)
 
     # 3. Build and start scheduler
     scheduler = build_ml_scheduler(db)

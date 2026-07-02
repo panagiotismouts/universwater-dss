@@ -16,8 +16,8 @@ scheduling:
   # Default: Monday at 02:00 UTC
   recalibration_cron: "0 2 * * 1"
 
-  # Prediction cycle interval in seconds (default: every hour)
-  prediction_interval_seconds: 3600
+  # Prediction cycle interval in seconds (weekly = 604800)
+  prediction_interval_seconds: 604800
 
 # ── WINGS datastream mappings ────────────────────────────────────────────────
 # Maps canonical variable_name → WINGS datastream_id.

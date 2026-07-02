@@ -39,7 +39,7 @@ from dss_shared.schemas.prediction import PredictionDocument
 
 log = get_logger(__name__)
 
-_VALID_PIPELINES = {"water", "soil"}
+_VALID_PIPELINES = {"water", "soil", "water_wqi_brown", "water_wqi_ccme", "water_wqi_entropy"}
 
 
 def _validate_pipeline(pipeline: str) -> None:

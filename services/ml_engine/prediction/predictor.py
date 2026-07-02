@@ -25,14 +25,14 @@ Skips silently if:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from dss_shared.config import get_settings
+from dss_shared.config import get_raw_yaml, get_settings
 from dss_shared.db.repositories.features import FeatureRepository
 from dss_shared.db.repositories.predictions import PredictionRepository
 from dss_shared.db.repositories.xai_results import XAIResultRepository
@@ -221,3 +221,142 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
             )
 
     log.info("prediction_cycle_completed")
+
+
+async def run_historical_backfill(db: AsyncIOMotorDatabase) -> None:
+    """
+    Write predictions for all historical feature documents for any active WQI
+    pipeline that has no predictions older than 7 days.  Called once at startup
+    after run_bootstrap_if_needed() so the dashboard history chart is populated.
+    Duplicate inserts are silently ignored by PredictionRepository.insert().
+    """
+    settings = get_settings()
+    raw = get_raw_yaml()
+    historical_start_str = raw.get("training", {}).get("historical_start_date", "2022-01-01")
+    historical_start = datetime.fromisoformat(historical_start_str).replace(tzinfo=timezone.utc)
+
+    store = ArtifactStore()
+    pred_repo = PredictionRepository(db)
+    feat_repo = FeatureRepository(db)
+    xai_repo = XAIResultRepository(db)
+    now = _utc_now()
+    cutoff = now - timedelta(days=7)
+    top_n = settings.api_shap_top_n
+
+    for pipeline_cfg in _ENABLED_PIPELINES:
+        pipeline = pipeline_cfg.pipeline_name
+
+        if (pipeline == "water" or pipeline.startswith("water_wqi")) and not settings.enable_water_pipeline:
+            continue
+        if pipeline == "soil" and not settings.enable_soil_pipeline:
+            continue
+
+        # Skip if historical predictions already exist
+        has_old = await pred_repo.col.count_documents(
+            {"pipeline": pipeline, "superseded": False, "input_feature_timestamp": {"$lt": cutoff}},
+            limit=1,
+        ) > 0
+        if has_old:
+            log.info("historical_backfill_skipped_already_done", pipeline=pipeline)
+            continue
+
+        active = await find_active_model(db, pipeline)
+        if active is None:
+            log.warning("historical_backfill_no_active_model", pipeline=pipeline)
+            continue
+
+        try:
+            model_cls = get_model_class(active.model_type)
+            model = model_cls()
+            model.load(Path(store._resolve(active.artifact_path)))
+        except Exception as exc:
+            log.error("historical_backfill_artifact_load_failed", pipeline=pipeline, error=str(exc))
+            continue
+
+        feature_pl = active.feature_pipeline or pipeline
+        feat_docs = await feat_repo.find_training_window(
+            pipeline=feature_pl,
+            start=historical_start,
+            end=now,
+            feature_schema_version=active.feature_schema_version,
+        )
+        if not feat_docs:
+            log.warning("historical_backfill_no_feature_docs", pipeline=pipeline)
+            continue
+
+        log.info("historical_backfill_started", pipeline=pipeline, n_docs=len(feat_docs))
+        written = 0
+
+        for feat_doc in feat_docs:
+            try:
+                x_row = np.array(
+                    [feat_doc.features.get(fname, 0.0) for fname in active.feature_names],
+                    dtype=np.float64,
+                ).reshape(1, -1)
+                predicted_value = float(model.predict(x_row)[0])
+            except Exception as exc:
+                log.debug("historical_backfill_predict_failed", sensor_id=feat_doc.sensor_id, error=str(exc))
+                continue
+
+            top_shap: list[TopShapFeature] = []
+            xai_result_id_for_pred = "000000000000000000000000"
+            xai_explanation: Optional[dict] = None
+
+            if settings.enable_xai:
+                try:
+                    explainer = get_explainer(active.model_family)
+                    xai_explanation = explainer.explain(model, x_row, active.feature_names)
+                    shap_vals: dict[str, float] = xai_explanation["shap_values"]
+                    feat_vals: dict[str, float] = xai_explanation["feature_values"]
+                    sorted_shap = sorted(shap_vals.items(), key=lambda kv: abs(kv[1]), reverse=True)
+                    top_shap = [
+                        TopShapFeature(
+                            feature=fname,
+                            shap_value=fval,
+                            input_value=feat_vals.get(fname, 0.0),
+                        )
+                        for fname, fval in sorted_shap[:top_n]
+                    ]
+                except Exception:
+                    pass
+
+            pred_doc = PredictionDocument(
+                pipeline=Pipeline(pipeline),
+                sensor_id=feat_doc.sensor_id,
+                target_variable=active.target_variable,
+                predicted_value=predicted_value,
+                input_feature_timestamp=feat_doc.feature_timestamp,
+                input_had_filled_values=feat_doc.has_filled_inputs,
+                model_id=active.model_id,
+                model_type=ModelType(active.model_type),
+                model_family=ModelFamily(active.model_family),
+                xai_result_id=xai_result_id_for_pred,
+                top_shap_features=top_shap,
+                prediction_generated_at=now,
+            )
+            pred_id = await pred_repo.insert(pred_doc)
+            if pred_id:
+                written += 1
+
+                if settings.enable_xai and top_shap and xai_explanation is not None:
+                    try:
+                        xai_doc = XAIResultDocument(
+                            prediction_id=pred_id,
+                            model_id=active.model_id,
+                            pipeline=Pipeline(pipeline),
+                            sensor_id=feat_doc.sensor_id,
+                            input_feature_timestamp=feat_doc.feature_timestamp,
+                            explainer_type=ExplainerType(xai_explanation["explainer_type"]),
+                            base_value=xai_explanation["base_value"],
+                            shap_values=xai_explanation["shap_values"],
+                            feature_input_values=xai_explanation["feature_values"],
+                            shap_sum_check=sum(xai_explanation["shap_values"].values()) + xai_explanation["base_value"],
+                            generated_at=now,
+                        )
+                        xai_result_id = await xai_repo.insert(xai_doc)
+                        if xai_result_id:
+                            await pred_repo.update_xai_result_id(pred_id, xai_result_id)
+                    except Exception:
+                        pass
+
+        log.info("historical_backfill_completed", pipeline=pipeline, written=written, total=len(feat_docs))

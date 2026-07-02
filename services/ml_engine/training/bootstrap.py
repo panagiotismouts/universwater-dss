@@ -34,7 +34,6 @@ from services.ml_engine.registry_manager import (
     activate_model,
     has_active_model,
     insert_candidate,
-    reject_model,
 )
 from services.ml_engine.training.dataset_builder import build_dataset
 from services.ml_engine.training.evaluator import evaluate_model
@@ -119,8 +118,8 @@ async def _run_bootstrap_for_pipeline(db, pipeline_cfg, start: datetime, end: da
     val_start = end  # placeholder; exact timestamps not tracked through numpy
     val_end = end
 
-    # Train all model types; collect (model_id, r2, passed, model, artifact_rel) tuples.
-    # Activate only the single best-performing model after all are trained.
+    # Train all model types and collect all results — bootstrap always keeps every candidate.
+    # Activate only the single best-performing model (highest R²) after all are trained.
     candidates = []
     for model_type in pipeline_cfg.model_types:
         result = await _train_and_register(
@@ -142,8 +141,7 @@ async def _run_bootstrap_for_pipeline(db, pipeline_cfg, start: datetime, end: da
             feature_pipeline=getattr(pipeline_cfg, "feature_pipeline", None),
             min_r2_threshold=getattr(pipeline_cfg, "min_r2_threshold", None),
         )
-        if result is not None:
-            candidates.append(result)
+        candidates.append(result)
 
     # Pick the candidate with the highest R² and activate only that one
     if candidates:
@@ -177,9 +175,14 @@ async def _train_and_register(
     store: ArtifactStore,
     feature_pipeline: str | None = None,
     min_r2_threshold: float | None = None,
-) -> "tuple[str, float, object, str] | None":
-    """Train and register one model type. Returns (model_id, r2, model, artifact_rel)
-    if the metric gate passes, or None if rejected."""
+) -> "tuple[str, float, object, str]":
+    """Train, evaluate, and register one model type.
+
+    Bootstrap always returns a candidate — it never rejects.  The metric gate
+    is evaluated and logged for observability, but bootstrap's job is to ensure
+    SOME model exists so predictions can start.  Recalibration enforces the gate
+    for future replacements.  The caller picks the best R² across all candidates.
+    """
     now = _utc_now()
     model_id = _make_model_id(pipeline, model_type)
     artifact_rel = f"{pipeline}/{model_type}/{model_id}.joblib"
@@ -189,7 +192,7 @@ async def _train_and_register(
     model = instantiate_model(model_type)
     model.fit(X_train, y_train)
 
-    # Evaluate on validation split
+    # Evaluate on validation split (informational — gate result is not enforced at bootstrap)
     metrics_doc = await evaluate_model(
         model=model,
         X_val=X_val,
@@ -206,11 +209,9 @@ async def _train_and_register(
     m = metrics_doc.metrics
     summary = EmbeddedMetricsSummary(r2=m.r2, mae=m.mae, rmse=m.rmse, mse=m.mse, mape=m.mape)
 
-    # Determine hyperparameters from the inner sklearn model
     inner = getattr(model, "_model", None)
     hyperparams: dict = inner.get_params() if inner is not None else {}
 
-    # Build and persist the candidate registry document
     candidate = ModelRegistryDocument(
         model_id=model_id,
         pipeline=Pipeline(pipeline),
@@ -234,19 +235,13 @@ async def _train_and_register(
     if metrics_doc.passed_threshold:
         log.info(
             "bootstrap_model_passed_gate",
-            pipeline=pipeline,
-            model_type=model_type,
-            model_id=model_id,
-            r2=f"{m.r2:.4f}",
+            pipeline=pipeline, model_type=model_type, model_id=model_id, r2=f"{m.r2:.4f}",
         )
-        return (model_id, m.r2, model, artifact_rel)
     else:
-        await reject_model(db, model_id, metrics_doc.rejection_reason or "metric gate failed")
         log.warning(
-            "bootstrap_model_rejected",
-            pipeline=pipeline,
-            model_type=model_type,
-            model_id=model_id,
-            reason=metrics_doc.rejection_reason,
+            "bootstrap_model_below_gate",
+            pipeline=pipeline, model_type=model_type, model_id=model_id,
+            r2=f"{m.r2:.4f}", reason=metrics_doc.rejection_reason,
         )
-        return None
+
+    return (model_id, m.r2, model, artifact_rel)

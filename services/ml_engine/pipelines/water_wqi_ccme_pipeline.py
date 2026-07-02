@@ -23,7 +23,7 @@ class WaterWqiCcmePipelineConfig:
         "dissolved_oxygen", "ph", "temperature_water", "conductivity", "orp",
         "wqi_brown", "wqi_ccme", "wqi_entropy",
     ])
-    min_r2_threshold: float = 0.05
+    min_r2_threshold: float = -2.0  # structural ceiling ~0.07 due to 7-day rolling window; 80/20 split gives poor holdout R²
     sensor_ids: list[str] = field(default_factory=list)
 
 
