@@ -16,7 +16,7 @@ The DSS ingests real-time observations from heterogeneous sensor networks, trans
 |---|---|---|---|
 | Aquaread Water Quality Sensor (252186) | WINGS SensorThings API | Water | pH, Dissolved Oxygen, Turbidity, Conductivity, Temperature, ORP, TDS, Salinity, Ammonia, Nitrate, Chlorophyll-a, Ammonium, Blue-Green Algae, CDOM, DO Saturation, Sigma-t |
 | HCMR Water Quality Monitoring Station | WINGS SensorThings API | Water | pH, Water Temperature, Conductivity, Dissolved Oxygen, ORP |
-| Soil Sensor Station | WINGS SensorThings API | Soil | Volumetric Water Content, Soil Temperature, N, P, K, Soil Conductivity |
+| Soil Sensor Station | WINGS SensorThings API | Soil | Soil Temperature, N, P, K, Soil Conductivity |
 | Universwater Meteorological Station | Local REST API (UOWM) | Met | Air Temperature, Precipitation, Humidity, Wind Speed, Wind Direction, Solar Radiation, Infrared Temperature |
 
 ### Prediction Targets
