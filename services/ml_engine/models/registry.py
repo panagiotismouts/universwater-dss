@@ -3,8 +3,6 @@ Model class registry.
 
 Maps model_type strings from config/MongoDB to concrete model wrapper classes.
 This is the single point of change when a new model type is added.
-
-TODO: Register all model types.
 """
 
 from __future__ import annotations
@@ -13,15 +11,27 @@ from typing import Type
 
 from services.ml_engine.models.base import BaseModel
 from services.ml_engine.models.white_box.linear_regression import LinearRegressionModel
+from services.ml_engine.models.white_box.elastic_net import ElasticNetModel
+from services.ml_engine.models.white_box.decision_tree import DecisionTreeModel
 from services.ml_engine.models.white_box.ridge_regression import RidgeRegressionModel
-from services.ml_engine.models.black_box.xgboost_model import XGBoostModel
 from services.ml_engine.models.black_box.random_forest import RandomForestModel
+from services.ml_engine.models.black_box.xgboost_model import XGBoostModel
+from services.ml_engine.models.black_box.lightgbm_model import LightGBMModel
+from services.ml_engine.models.black_box.catboost_model import CatBoostModel
+from services.ml_engine.models.black_box.svr_model import SVRModel
 
 _REGISTRY: dict[str, Type[BaseModel]] = {
+    # White-box models
     "linear_regression": LinearRegressionModel,
-    "ridge_regression":  RidgeRegressionModel,
-    "xgboost":           XGBoostModel,
-    "random_forest":     RandomForestModel,
+    "elastic_net":        ElasticNetModel,
+    "decision_tree":      DecisionTreeModel,
+    "ridge_regression":   RidgeRegressionModel,  # kept for backward compat with stored models
+    # Black-box models
+    "random_forest":      RandomForestModel,
+    "xgboost":            XGBoostModel,
+    "lightgbm":           LightGBMModel,
+    "catboost":           CatBoostModel,
+    "svr":                SVRModel,
 }
 
 

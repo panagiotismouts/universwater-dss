@@ -82,6 +82,10 @@ class PredictionDocument(MongoDocument):
     input_feature_timestamp: datetime       # UTC — domain
     input_had_filled_values: bool = False   # Copied from FeatureDocument.has_filled_inputs
 
+    # Forecast target time (input_feature_timestamp + horizon).
+    # None for nowcast pipelines (soil, retired wqi nowcasts).
+    target_timestamp: Optional[datetime] = None    # UTC — domain
+
     # Model reference (denormalized for join-free reads)
     model_id: str = Field(..., min_length=1)
     model_type: ModelType

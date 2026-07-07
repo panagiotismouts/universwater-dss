@@ -28,9 +28,17 @@ class Pipeline(str, Enum):
     """
     WATER = "water"
     SOIL = "soil"
+    # Nowcast WQI pipelines (retired — kept for historical documents)
     WATER_WQI_BROWN   = "water_wqi_brown"
     WATER_WQI_CCME    = "water_wqi_ccme"
     WATER_WQI_ENTROPY = "water_wqi_entropy"
+    # Forecast WQI pipelines (+7 / +14 days ahead)
+    WATER_WQI_BROWN_7D    = "water_wqi_brown_7d"
+    WATER_WQI_BROWN_14D   = "water_wqi_brown_14d"
+    WATER_WQI_CCME_7D     = "water_wqi_ccme_7d"
+    WATER_WQI_CCME_14D    = "water_wqi_ccme_14d"
+    WATER_WQI_ENTROPY_7D  = "water_wqi_entropy_7d"
+    WATER_WQI_ENTROPY_14D = "water_wqi_entropy_14d"
     MET_WATER = "met_water"
     MET_SOIL = "met_soil"
 
@@ -53,18 +61,26 @@ class ModelType(str, Enum):
     Algorithm identifier.  New model types are added here and to the model
     class registry in services/ml_engine/models/registry.py.
     """
-    XGBOOST = "xgboost"
-    RANDOM_FOREST = "random_forest"
+    # White-box (directly interpretable)
     LINEAR_REGRESSION = "linear_regression"
+    ELASTIC_NET = "elastic_net"
+    DECISION_TREE = "decision_tree"
+    # Black-box (SHAP required for XAI)
+    RANDOM_FOREST = "random_forest"
+    XGBOOST = "xgboost"
+    LIGHTGBM = "lightgbm"
+    CATBOOST = "catboost"
+    SVR = "svr"
+    # Legacy — kept for backward compat with stored documents
     RIDGE_REGRESSION = "ridge_regression"
 
 
 class ModelFamily(str, Enum):
     """
-    Model family determines which SHAP explainer is used.
+    Model family.  Determines whether SHAP is applied at prediction time.
 
-    black_box → TreeExplainer (XGBoost, RandomForest)
-    white_box → LinearExplainer (LinearRegression, Ridge)
+    black_box — SHAP XAI layer required (Random Forest, XGBoost, LightGBM, CatBoost, SVR)
+    white_box — directly interpretable; no SHAP (Linear Regression, Elastic Net, Decision Tree)
     """
     BLACK_BOX = "black_box"
     WHITE_BOX = "white_box"
@@ -75,17 +91,19 @@ class ModelStatus(str, Enum):
     Lifecycle status of a trained model instance in model_registry.
 
     Transitions:
-        candidate → active    (metric gate passed, promoted by registry_manager)
-        active    → retired   (superseded when a newer active model is promoted)
-        candidate → rejected  (metric gate failed)
+        candidate  → active     (metric gate passed, promoted by registry_manager)
+        active     → retired    (superseded when a newer active model is promoted)
+        candidate  → rejected   (metric gate failed)
+        active     → superseded (manual admin reset to force bootstrap retraining)
 
     At most one document per pipeline may have status="active" at any time.
     This is enforced by a partial unique index and by registry_manager logic.
     """
     ACTIVE = "active"
+    CANDIDATE = "candidate"
     RETIRED = "retired"
     REJECTED = "rejected"
-    CANDIDATE = "candidate"
+    SUPERSEDED = "superseded"
 
 
 # ── Ingestion / preprocessing status ──────────────────────────────────────────

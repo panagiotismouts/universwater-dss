@@ -3,8 +3,9 @@ Results router.
 
 GET /results/latest   — latest prediction per sensor for a pipeline
 GET /results/history  — paginated historical predictions
+GET /wqi/current      — latest computed WQI values per water sensor (wqi_router)
 
-Both endpoints require a valid Bearer token.
+All endpoints require a valid Bearer token.
 Returns HTTP 404 with error_code=NO_RESULTS_AVAILABLE when no predictions
 exist yet (expected during initial bootstrap).
 """
@@ -16,12 +17,39 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from dss_shared.schemas.api_response import HistoricalResultsResponse, LatestResultsResponse
+from dss_shared.schemas.api_response import (
+    CurrentWQIResponse,
+    HistoricalResultsResponse,
+    LatestResultsResponse,
+)
 from services.api_service.dependencies.auth import verify_bearer_token
 from services.api_service.dependencies.db import get_db
-from services.api_service.services.result_service import get_latest_results, get_result_history
+from services.api_service.services.result_service import (
+    get_current_wqi,
+    get_latest_results,
+    get_result_history,
+)
 
 router = APIRouter()
+wqi_router = APIRouter()
+
+
+@wqi_router.get("/current", response_model=CurrentWQIResponse)
+async def endpoint_current_wqi(
+    client_id: str = Depends(verify_bearer_token),
+    db=Depends(get_db),
+) -> CurrentWQIResponse:
+    """Latest computed WQI values (deterministic, not predictions) per water sensor."""
+    response = await get_current_wqi(db)
+    if not response.results:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error_code": "NO_RESULTS_AVAILABLE",
+                "message": "No water feature documents available yet.",
+            },
+        )
+    return response
 
 
 @router.get("/latest", response_model=LatestResultsResponse)

@@ -27,9 +27,7 @@ from services.ml_engine.artifact_store import ArtifactStore
 from services.ml_engine.models.registry import instantiate_model
 from services.ml_engine.pipelines.soil_pipeline import SOIL_PIPELINE
 from services.ml_engine.pipelines.water_pipeline import WATER_PIPELINE  # kept for reference
-from services.ml_engine.pipelines.water_wqi_brown_pipeline import WATER_WQI_BROWN_PIPELINE
-from services.ml_engine.pipelines.water_wqi_ccme_pipeline import WATER_WQI_CCME_PIPELINE
-from services.ml_engine.pipelines.water_wqi_entropy_pipeline import WATER_WQI_ENTROPY_PIPELINE
+from services.ml_engine.pipelines.wqi_horizon_pipelines import WQI_HORIZON_PIPELINES
 from services.ml_engine.registry_manager import (
     activate_model,
     has_active_model,
@@ -41,9 +39,7 @@ from services.ml_engine.training.evaluator import evaluate_model
 log = get_logger(__name__)
 
 _ENABLED_PIPELINES = [
-    WATER_WQI_BROWN_PIPELINE,
-    WATER_WQI_CCME_PIPELINE,
-    WATER_WQI_ENTROPY_PIPELINE,
+    *WQI_HORIZON_PIPELINES,
     SOIL_PIPELINE,
 ]
 _TRAIN_RATIO = 0.8
@@ -99,6 +95,7 @@ async def _run_bootstrap_for_pipeline(db, pipeline_cfg, start: datetime, end: da
             db, pipeline, start, end, schema_version, target,
             feature_pipeline=getattr(pipeline_cfg, "feature_pipeline", None),
             excluded_features=getattr(pipeline_cfg, "excluded_features", None),
+            horizon_days=getattr(pipeline_cfg, "horizon_days", 0),
         )
     except ValueError as exc:
         log.warning("bootstrap_dataset_insufficient", pipeline=pipeline, error=str(exc))

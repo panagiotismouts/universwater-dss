@@ -17,7 +17,10 @@ class WaterWqiEntropyPipelineConfig:
     feature_pipeline: str = "water"
     target_variable: str = "wqi_entropy"
     feature_schema_version: str = "water_v1"
-    model_types: list[str] = field(default_factory=lambda: ["xgboost", "ridge_regression"])
+    model_types: list[str] = field(default_factory=lambda: [
+        "linear_regression", "elastic_net", "decision_tree",
+        "random_forest", "xgboost", "lightgbm", "catboost", "svr",
+    ])
     excluded_features: list[str] = field(default_factory=lambda: [
         "dissolved_oxygen", "ph", "temperature_water", "conductivity", "orp",
         "wqi_brown", "wqi_ccme", "wqi_entropy",

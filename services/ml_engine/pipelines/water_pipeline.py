@@ -15,7 +15,10 @@ class WaterPipelineConfig:
     pipeline_name: str = "water"
     target_variable: str = "dissolved_oxygen"
     feature_schema_version: str = "water_v1"
-    model_types: list[str] = field(default_factory=lambda: ["xgboost", "ridge_regression"])
+    model_types: list[str] = field(default_factory=lambda: [
+        "linear_regression", "elastic_net", "decision_tree",
+        "random_forest", "xgboost", "lightgbm", "catboost", "svr",
+    ])
     # sensor_ids is intentionally empty — populated dynamically from feature docs
     sensor_ids: list[str] = field(default_factory=list)
 

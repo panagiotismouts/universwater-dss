@@ -9,7 +9,6 @@ Feature set (water_v1):
     ph_mean_1h, ph_std_1h, ph_mean_3h, ph_lag_1, ph_lag_2
     do_mean_1h, do_std_1h, do_mean_3h, do_lag_1
     temp_water_mean_1h, temp_water_lag_1
-    turbidity_mean_1h, turbidity_lag_1
     conductivity_mean_1h, conductivity_lag_1
     orp_mean_1h, orp_lag_1
 
@@ -78,7 +77,6 @@ async def compute_water_features(
     ph_docs   = await repo.find_window("water", sensor_id, "ph",               window_start, feature_timestamp)
     do_docs   = await repo.find_window("water", sensor_id, "dissolved_oxygen",  window_start, feature_timestamp)
     temp_docs = await repo.find_window("water", sensor_id, "temperature_water", window_start, feature_timestamp)
-    turb_docs = await repo.find_window("water", sensor_id, "turbidity",         window_start, feature_timestamp)
     cond_docs = await repo.find_window("water", sensor_id, "conductivity",      window_start, feature_timestamp)
     orp_docs  = await repo.find_window("water", sensor_id, "orp",               window_start, feature_timestamp)
 
@@ -103,8 +101,6 @@ async def compute_water_features(
     _add_lags(features, do_docs, "do", n=1)
     _add_rolling(features, temp_docs, feature_timestamp, "temp_water",   _1H)
     _add_lags(features, temp_docs, "temp_water", n=1)
-    _add_rolling(features, turb_docs, feature_timestamp, "turbidity",    _1H)
-    _add_lags(features, turb_docs, "turbidity", n=1)
     _add_rolling(features, cond_docs, feature_timestamp, "conductivity", _1H)
     _add_lags(features, cond_docs, "conductivity", n=1)
     _add_rolling(features, orp_docs,  feature_timestamp, "orp",          _1H)
@@ -114,7 +110,6 @@ async def compute_water_features(
     _add_current_value(features, ph_docs,   "ph")
     _add_current_value(features, do_docs,   "dissolved_oxygen")
     _add_current_value(features, temp_docs, "temperature_water")
-    _add_current_value(features, turb_docs, "turbidity")
     _add_current_value(features, cond_docs, "conductivity")
     _add_current_value(features, orp_docs,  "orp")
 
@@ -133,7 +128,7 @@ async def compute_water_features(
     if not final_features:
         return None
 
-    all_docs = ph_docs + do_docs + temp_docs + turb_docs + cond_docs + orp_docs
+    all_docs = ph_docs + do_docs + temp_docs + cond_docs + orp_docs
     fill_fraction = _fill_fraction(all_docs)
     all_ts = [d.measured_at for d in all_docs]
 
@@ -375,6 +370,13 @@ def _compute_wqi_entropy(
     eps = 1e-12
     divergences: dict[str, float] = {}
     for key, series in param_qi.items():
+        if max(series) == min(series):
+            # Constant Qi series (including all-zero, e.g. a clamped sub-index)
+            # carries no discriminating information — divergence 0, weight 0.
+            # Without this guard an all-zero series degenerates to entropy 0 /
+            # divergence 1 and absorbs ~all the weight.
+            divergences[key] = 0.0
+            continue
         col_sum = sum(series) or eps
         p_vals  = [v / col_sum for v in series]
         n_obs   = len(p_vals)

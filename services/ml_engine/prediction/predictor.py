@@ -44,18 +44,14 @@ from services.ml_engine.artifact_store import ArtifactStore
 from services.ml_engine.models.registry import get_model_class
 from services.ml_engine.pipelines.soil_pipeline import SOIL_PIPELINE
 from services.ml_engine.pipelines.water_pipeline import WATER_PIPELINE  # kept for reference
-from services.ml_engine.pipelines.water_wqi_brown_pipeline import WATER_WQI_BROWN_PIPELINE
-from services.ml_engine.pipelines.water_wqi_ccme_pipeline import WATER_WQI_CCME_PIPELINE
-from services.ml_engine.pipelines.water_wqi_entropy_pipeline import WATER_WQI_ENTROPY_PIPELINE
+from services.ml_engine.pipelines.wqi_horizon_pipelines import WQI_HORIZON_PIPELINES
 from services.ml_engine.registry_manager import find_active_model
 from services.ml_engine.xai.registry import get_explainer
 
 log = get_logger(__name__)
 
 _ENABLED_PIPELINES = [
-    WATER_WQI_BROWN_PIPELINE,
-    WATER_WQI_CCME_PIPELINE,
-    WATER_WQI_ENTROPY_PIPELINE,
+    *WQI_HORIZON_PIPELINES,
     SOIL_PIPELINE,
 ]
 
@@ -93,6 +89,7 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
 
     for pipeline_cfg in _ENABLED_PIPELINES:
         pipeline = pipeline_cfg.pipeline_name
+        horizon_days = getattr(pipeline_cfg, "horizon_days", 0)
 
         if (pipeline == "water" or pipeline.startswith("water_wqi")) and not settings.enable_water_pipeline:
             continue
@@ -154,9 +151,9 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
             xai_explanation: Optional[dict] = None
             top_shap: list[TopShapFeature] = []
 
-            if settings.enable_xai:
+            if settings.enable_xai and active.model_family == "black_box":
                 try:
-                    explainer = get_explainer(active.model_family)
+                    explainer = get_explainer(active.model_family, model_type=active.model_type)
                     xai_explanation = explainer.explain(model, x_row, active.feature_names)
 
                     shap_vals: dict[str, float] = xai_explanation["shap_values"]
@@ -181,6 +178,10 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
                 predicted_value=predicted_value,
                 input_feature_timestamp=feat_doc.feature_timestamp,
                 input_had_filled_values=feat_doc.has_filled_inputs,
+                target_timestamp=(
+                    feat_doc.feature_timestamp + timedelta(days=horizon_days)
+                    if horizon_days > 0 else None
+                ),
                 model_id=active.model_id,
                 model_type=ModelType(active.model_type),
                 model_family=ModelFamily(active.model_family),
@@ -245,6 +246,7 @@ async def run_historical_backfill(db: AsyncIOMotorDatabase) -> None:
 
     for pipeline_cfg in _ENABLED_PIPELINES:
         pipeline = pipeline_cfg.pipeline_name
+        horizon_days = getattr(pipeline_cfg, "horizon_days", 0)
 
         if (pipeline == "water" or pipeline.startswith("water_wqi")) and not settings.enable_water_pipeline:
             continue
@@ -302,9 +304,11 @@ async def run_historical_backfill(db: AsyncIOMotorDatabase) -> None:
             xai_result_id_for_pred = "000000000000000000000000"
             xai_explanation: Optional[dict] = None
 
-            if settings.enable_xai:
+            # KernelSHAP (SVR) is ~30s per row — skip XAI during bulk backfill
+            # for SVR actives; live weekly predictions still compute it.
+            if settings.enable_xai and active.model_family == "black_box" and active.model_type != "svr":
                 try:
-                    explainer = get_explainer(active.model_family)
+                    explainer = get_explainer(active.model_family, model_type=active.model_type)
                     xai_explanation = explainer.explain(model, x_row, active.feature_names)
                     shap_vals: dict[str, float] = xai_explanation["shap_values"]
                     feat_vals: dict[str, float] = xai_explanation["feature_values"]
@@ -327,6 +331,10 @@ async def run_historical_backfill(db: AsyncIOMotorDatabase) -> None:
                 predicted_value=predicted_value,
                 input_feature_timestamp=feat_doc.feature_timestamp,
                 input_had_filled_values=feat_doc.has_filled_inputs,
+                target_timestamp=(
+                    feat_doc.feature_timestamp + timedelta(days=horizon_days)
+                    if horizon_days > 0 else None
+                ),
                 model_id=active.model_id,
                 model_type=ModelType(active.model_type),
                 model_family=ModelFamily(active.model_family),

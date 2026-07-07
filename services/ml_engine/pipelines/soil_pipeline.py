@@ -16,7 +16,10 @@ class SoilPipelineConfig:
     pipeline_name: str = "soil"
     target_variable: str = "soil_temperature"
     feature_schema_version: str = "soil_v1"
-    model_types: list[str] = field(default_factory=lambda: ["xgboost", "ridge_regression"])
+    model_types: list[str] = field(default_factory=lambda: [
+        "linear_regression", "elastic_net", "decision_tree",
+        "random_forest", "xgboost", "lightgbm", "catboost", "svr",
+    ])
     sensor_ids: list[str] = field(default_factory=list)
 
 

@@ -98,6 +98,7 @@ class PredictionObject(DSSBaseModel):
 
     prediction_timestamp: datetime      # When the ML engine generated this prediction
     input_feature_timestamp: datetime   # The "as of" time of the input features
+    target_timestamp: Optional[datetime] = None  # Forecast "for" date; null for nowcasts
 
     model: ModelInfo
     xai: XAIBlock
@@ -157,6 +158,28 @@ class HistoricalResultsResponse(DSSBaseModel):
     page: int = Field(..., ge=1)
     page_size: int = Field(..., ge=1)
     results: list[PredictionObject]
+
+
+# ---------------------------------------------------------------------------
+# GET /wqi/current — response model
+# ---------------------------------------------------------------------------
+
+class CurrentWQIEntry(DSSBaseModel):
+    """
+    Latest computed WQI values for one water sensor, read directly from the
+    most recent engineered feature document (deterministic computation, not
+    a model prediction).
+    """
+    sensor_id: str
+    feature_timestamp: datetime
+    wqi_brown: Optional[float] = None
+    wqi_ccme: Optional[float] = None
+    wqi_entropy: Optional[float] = None
+
+
+class CurrentWQIResponse(DSSBaseModel):
+    """Response body for GET /wqi/current."""
+    results: list[CurrentWQIEntry]
 
 
 # ---------------------------------------------------------------------------

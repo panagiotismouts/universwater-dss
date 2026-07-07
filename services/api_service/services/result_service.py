@@ -21,11 +21,14 @@ from typing import Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from dss_shared.db.repositories.features import FeatureRepository
 from dss_shared.db.repositories.model_registry import ModelRegistryRepository
 from dss_shared.db.repositories.predictions import PredictionRepository
 from dss_shared.db.repositories.xai_results import XAIResultRepository
 from dss_shared.logging import get_logger
 from dss_shared.schemas.api_response import (
+    CurrentWQIEntry,
+    CurrentWQIResponse,
     DataQuality,
     HistoricalResultsResponse,
     LatestResultsResponse,
@@ -39,7 +42,15 @@ from dss_shared.schemas.prediction import PredictionDocument
 
 log = get_logger(__name__)
 
-_VALID_PIPELINES = {"water", "soil", "water_wqi_brown", "water_wqi_ccme", "water_wqi_entropy"}
+_VALID_PIPELINES = {
+    "water", "soil",
+    # Retired nowcast pipelines — kept queryable for historical records
+    "water_wqi_brown", "water_wqi_ccme", "water_wqi_entropy",
+    # Forecast pipelines (+7 / +14 days)
+    "water_wqi_brown_7d", "water_wqi_brown_14d",
+    "water_wqi_ccme_7d", "water_wqi_ccme_14d",
+    "water_wqi_entropy_7d", "water_wqi_entropy_14d",
+}
 
 
 def _validate_pipeline(pipeline: str) -> None:
@@ -125,6 +136,7 @@ async def _build_prediction_object(
         prediction_interval=interval,
         prediction_timestamp=doc.prediction_generated_at,
         input_feature_timestamp=doc.input_feature_timestamp,
+        target_timestamp=doc.target_timestamp,
         model=model_info,
         xai=xai_block,
         data_quality=DataQuality(input_had_filled_values=doc.input_had_filled_values),
@@ -157,6 +169,36 @@ async def get_latest_results(
             log.error("result_service_build_failed", sensor_id=doc.sensor_id, error=str(exc))
 
     return LatestResultsResponse(pipeline=pipeline, results=results)
+
+
+async def get_current_wqi(db: AsyncIOMotorDatabase) -> CurrentWQIResponse:
+    """
+    Return the latest computed WQI values per water sensor, read from the most
+    recent engineered feature document.  These are deterministic computations
+    from sensor data (not model predictions).
+    """
+    repo = FeatureRepository(db)
+    stages = [
+        {"$match": {"pipeline": "water", "superseded": False}},
+        {"$sort": {"feature_timestamp": -1}},
+        {"$group": {
+            "_id": "$sensor_id",
+            "feature_timestamp": {"$first": "$feature_timestamp"},
+            "features": {"$first": "$features"},
+        }},
+        {"$sort": {"_id": 1}},
+    ]
+    entries: list[CurrentWQIEntry] = []
+    async for row in repo.col.aggregate(stages):
+        feats = row.get("features") or {}
+        entries.append(CurrentWQIEntry(
+            sensor_id=row["_id"],
+            feature_timestamp=row["feature_timestamp"],
+            wqi_brown=feats.get("wqi_brown"),
+            wqi_ccme=feats.get("wqi_ccme"),
+            wqi_entropy=feats.get("wqi_entropy"),
+        ))
+    return CurrentWQIResponse(results=entries)
 
 
 async def get_result_history(

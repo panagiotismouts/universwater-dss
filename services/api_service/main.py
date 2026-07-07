@@ -64,6 +64,7 @@ def create_app() -> FastAPI:
     # ── Routers ───────────────────────────────────────────────────────────
     app.include_router(auth.router, prefix="/auth", tags=["auth"])
     app.include_router(results.router, prefix="/results", tags=["results"])
+    app.include_router(results.wqi_router, prefix="/wqi", tags=["wqi"])
     app.include_router(admin.router, prefix="", tags=["admin"])
 
     # ── Global exception handlers ─────────────────────────────────────────

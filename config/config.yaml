@@ -25,45 +25,9 @@ scheduling:
 wings:
   page_size: 1000
   sensors:
-    # ── Aquaread Water Quality station 252186 ─────────────────────────────────
-    - sensor_id: aquaread_1
-      datastreams:
-        ph:                "862382069252186_ph"
-        dissolved_oxygen:  "862382069252186_dissolved_oxygen"
-        temperature_water: "862382069252186_temperature"
-        turbidity:         "862382069252186_turbidity"
-        conductivity:      "862382069252186_conductivity"
-        do_saturation:     "862382069252186_dissolved_oxygen_saturation"
-        tds:               "862382069252186_tds"
-        salinity:          "862382069252186_salinity"
-        orp:               "862382069252186_orp"
-        ammonia:           "862382069252186_ammonia"
-        nitrate:           "862382069252186_nitrate"
-        chlorophyll_a:     "862382069252186_chlorophyll"
-        ammonium:          "862382069252186_ammonium"
-        blue_green_algae:  "862382069252186_blue_green_algae"
-        cdom:              "862382069252186_cdom"
-        sigma_t:           "862382069252186_sigma_t"
-
-    # ── Aquaread Water Quality station 252251 ─────────────────────────────────
-    - sensor_id: aquaread_2
-      datastreams:
-        ph:                "862382069252251_ph"
-        dissolved_oxygen:  "862382069252251_dissolved_oxygen"
-        temperature_water: "862382069252251_temperature"
-        turbidity:         "862382069252251_turbidity"
-        conductivity:      "862382069252251_conductivity"
-        do_saturation:     "862382069252251_dissolved_oxygen_saturation"
-        tds:               "862382069252251_tds"
-        salinity:          "862382069252251_salinity"
-        orp:               "862382069252251_orp"
-        ammonia:           "862382069252251_ammonia"
-        nitrate:           "862382069252251_nitrate"
-        chlorophyll_a:     "862382069252251_chlorophyll"
-        ammonium:          "862382069252251_ammonium"
-        blue_green_algae:  "862382069252251_blue_green_algae"
-        cdom:              "862382069252251_cdom"
-        sigma_t:           "862382069252251_sigma_t"
+    # Water quality data comes EXCLUSIVELY from the HCMR station.
+    # The Aquaread stations (862382069252186, 862382069252251) are deployed in
+    # the field but are NOT consumed by the DSS water pipeline.
 
     # ── HCMR water quality station ────────────────────────────────────────────
     - sensor_id: hcmr
@@ -101,6 +65,10 @@ uowm:
 # poll_interval_seconds controls how often the job fires.
 ingestion:
   sources:
+    # Only the 5 HCMR water parameters are polled.  The 11 Aquaread-only
+    # variables (turbidity, do_saturation, tds, salinity, ammonia, nitrate,
+    # chlorophyll_a, ammonium, blue_green_algae, cdom, sigma_t) were removed
+    # together with the Aquaread sensors.
     - name: wings_water
       variables:
         - name: ph
@@ -109,31 +77,9 @@ ingestion:
           poll_interval_seconds: 900
         - name: temperature_water
           poll_interval_seconds: 900
-        - name: turbidity
-          poll_interval_seconds: 900
         - name: conductivity
           poll_interval_seconds: 900
         - name: orp
-          poll_interval_seconds: 900
-        - name: do_saturation
-          poll_interval_seconds: 900
-        - name: tds
-          poll_interval_seconds: 900
-        - name: salinity
-          poll_interval_seconds: 900
-        - name: ammonia
-          poll_interval_seconds: 900
-        - name: nitrate
-          poll_interval_seconds: 900
-        - name: chlorophyll_a
-          poll_interval_seconds: 900
-        - name: ammonium
-          poll_interval_seconds: 900
-        - name: blue_green_algae
-          poll_interval_seconds: 900
-        - name: cdom
-          poll_interval_seconds: 900
-        - name: sigma_t
           poll_interval_seconds: 900
 
     - name: wings_soil
