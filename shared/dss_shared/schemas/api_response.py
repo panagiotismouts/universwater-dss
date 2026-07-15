@@ -94,6 +94,9 @@ class PredictionObject(DSSBaseModel):
     sensor_id: str
     predicted_variable: str
     predicted_value: float
+    # Forecast change over the horizon (delta-target models); the final value
+    # equals the current WQI at issue time plus this delta.  Null otherwise.
+    predicted_delta: Optional[float] = None
     prediction_interval: Optional[PredictionInterval] = None   # null when not available
 
     prediction_timestamp: datetime      # When the ML engine generated this prediction

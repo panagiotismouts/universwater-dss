@@ -59,6 +59,9 @@ class EmbeddedMetricsSummary(DSSBaseModel):
     rmse: float
     mse: Optional[float] = None
     mape: Optional[float] = None
+    # Persistence-baseline MAE (mean |Δ| on the validation set) — present only
+    # for delta-target forecast models; mae < baseline_mae ⇔ beats persistence.
+    baseline_mae: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +99,9 @@ class ModelRegistryDocument(MongoDocument):
     # Training data provenance
     feature_schema_version: str = Field(..., min_length=1)
     target_variable: str = Field(..., min_length=1)
+    # True when the model was trained on horizon deltas (WQI(t+h) − WQI(t)).
+    # The predictor anchors such models: forecast = current WQI + predicted Δ.
+    target_is_delta: bool = False
     training_data_start: datetime       # UTC — domain
     training_data_end: datetime         # UTC — domain
     training_sample_count: int = Field(..., ge=1)
@@ -171,6 +177,7 @@ class ModelMetrics(DSSBaseModel):
     mse: float = Field(..., ge=0.0)
     rmse: float = Field(..., ge=0.0)
     mape: Optional[float] = Field(default=None, ge=0.0)
+    baseline_mae: Optional[float] = Field(default=None, ge=0.0)
 
     @model_validator(mode="after")
     def _validate_rmse_consistency(self) -> "ModelMetrics":

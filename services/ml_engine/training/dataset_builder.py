@@ -33,7 +33,8 @@ _MIN_TRAINING_ROWS = 10
 
 # Max distance between (t + horizon) and the matched future document for
 # horizon-target construction.  Feature docs are ~hourly with gaps.
-_HORIZON_MATCH_TOLERANCE = timedelta(hours=6)
+# Kept tight so the target reflects conditions AT the horizon, not hours away.
+_HORIZON_MATCH_TOLERANCE = timedelta(hours=3)
 
 
 async def build_dataset(
@@ -46,6 +47,7 @@ async def build_dataset(
     feature_pipeline: str | None = None,
     excluded_features: list[str] | None = None,
     horizon_days: int = 0,
+    delta_target: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """
     Load and assemble a feature matrix for training.
@@ -61,9 +63,16 @@ async def build_dataset(
                                 > 0 = forecast: y is taken from the same-sensor
                                 document nearest (t + horizon_days), within
                                 _HORIZON_MATCH_TOLERANCE; unmatched rows are
-                                dropped.  The current value of target_variable
-                                remains in X (it is past information relative
-                                to the forecast target).
+                                dropped.  Target freshness: the future document
+                                must not contain forward-filled inputs.  The
+                                current value of target_variable remains in X
+                                (it is past information relative to the target
+                                and the natural persistence anchor).
+        delta_target:           Only meaningful with horizon_days > 0.  When
+                                True, y = WQI(t+h) − WQI(t) — the CHANGE over
+                                the horizon — instead of the absolute future
+                                value.  The published forecast is then
+                                current WQI + predicted delta (predictor side).
 
     Returns:
         (X, y, feature_names)
@@ -136,7 +145,18 @@ async def build_dataset(
             if future_doc is None or best_dt > _HORIZON_MATCH_TOLERANCE:
                 unmatched += 1
                 continue
+            if future_doc.has_filled_inputs:
+                # Target freshness: reject targets whose WQI rests on
+                # forward-filled (carried-over) measurements.
+                unmatched += 1
+                continue
             target_val = future_doc.features.get(target_variable)
+            if delta_target:
+                cur_val = doc.features.get(target_variable)
+                if target_val is None or cur_val is None:
+                    skipped += 1
+                    continue
+                target_val = float(target_val) - float(cur_val)
         else:
             target_val = doc.features.get(target_variable)
 

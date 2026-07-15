@@ -141,10 +141,22 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
 
             # Predict
             try:
-                predicted_value = float(model.predict(x_row)[0])
+                raw_pred = float(model.predict(x_row)[0])
             except Exception as exc:
                 log.error("prediction_model_predict_failed", sensor_id=sensor_id, error=str(exc))
                 continue
+
+            # Delta-target models forecast the CHANGE; anchor on the current WQI.
+            predicted_delta: Optional[float] = None
+            if active.target_is_delta:
+                anchor = feat_doc.features.get(active.target_variable)
+                if anchor is None:
+                    log.warning("prediction_no_anchor_value", pipeline=pipeline, sensor_id=sensor_id)
+                    continue
+                predicted_delta = raw_pred
+                predicted_value = min(max(float(anchor) + raw_pred, 0.0), 100.0)
+            else:
+                predicted_value = raw_pred
 
             # XAI — compute raw explanation values first (before prediction insert)
             # The XAIResultDocument is built after insert so we have the real pred_id.
@@ -182,6 +194,7 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
                     feat_doc.feature_timestamp + timedelta(days=horizon_days)
                     if horizon_days > 0 else None
                 ),
+                predicted_delta=predicted_delta,
                 model_id=active.model_id,
                 model_type=ModelType(active.model_type),
                 model_family=ModelFamily(active.model_family),
@@ -295,10 +308,20 @@ async def run_historical_backfill(db: AsyncIOMotorDatabase) -> None:
                     [feat_doc.features.get(fname, 0.0) for fname in active.feature_names],
                     dtype=np.float64,
                 ).reshape(1, -1)
-                predicted_value = float(model.predict(x_row)[0])
+                raw_pred = float(model.predict(x_row)[0])
             except Exception as exc:
                 log.debug("historical_backfill_predict_failed", sensor_id=feat_doc.sensor_id, error=str(exc))
                 continue
+
+            predicted_delta: Optional[float] = None
+            if active.target_is_delta:
+                anchor = feat_doc.features.get(active.target_variable)
+                if anchor is None:
+                    continue
+                predicted_delta = raw_pred
+                predicted_value = min(max(float(anchor) + raw_pred, 0.0), 100.0)
+            else:
+                predicted_value = raw_pred
 
             top_shap: list[TopShapFeature] = []
             xai_result_id_for_pred = "000000000000000000000000"
@@ -335,6 +358,7 @@ async def run_historical_backfill(db: AsyncIOMotorDatabase) -> None:
                     feat_doc.feature_timestamp + timedelta(days=horizon_days)
                     if horizon_days > 0 else None
                 ),
+                predicted_delta=predicted_delta,
                 model_id=active.model_id,
                 model_type=ModelType(active.model_type),
                 model_family=ModelFamily(active.model_family),

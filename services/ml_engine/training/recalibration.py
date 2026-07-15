@@ -107,6 +107,7 @@ async def _recalibrate_pipeline(db, pipeline_cfg, start: datetime, end: datetime
             feature_pipeline=getattr(pipeline_cfg, "feature_pipeline", None),
             excluded_features=getattr(pipeline_cfg, "excluded_features", None),
             horizon_days=getattr(pipeline_cfg, "horizon_days", 0),
+            delta_target=getattr(pipeline_cfg, "delta_target", False),
         )
     except ValueError as exc:
         log.warning("recalibration_dataset_insufficient", pipeline=pipeline, error=str(exc))
@@ -147,10 +148,14 @@ async def _recalibrate_pipeline(db, pipeline_cfg, start: datetime, end: datetime
             evaluation_type=EvaluationType.RECALIBRATION_CHECK,
             baseline_model_id=baseline_model_id,
             min_r2_override=getattr(pipeline_cfg, "min_r2_threshold", None),
+            delta_target=getattr(pipeline_cfg, "delta_target", False),
         )
 
         m = metrics_doc.metrics
-        summary = EmbeddedMetricsSummary(r2=m.r2, mae=m.mae, rmse=m.rmse, mse=m.mse, mape=m.mape)
+        summary = EmbeddedMetricsSummary(
+            r2=m.r2, mae=m.mae, rmse=m.rmse, mse=m.mse, mape=m.mape,
+            baseline_mae=m.baseline_mae,
+        )
         inner = getattr(model, "_model", None)
         hyperparams: dict = inner.get_params() if inner is not None else {}
 
@@ -171,6 +176,7 @@ async def _recalibrate_pipeline(db, pipeline_cfg, start: datetime, end: datetime
             status=ModelStatus.CANDIDATE,
             trained_at=end,
             feature_pipeline=getattr(pipeline_cfg, "feature_pipeline", None),
+            target_is_delta=getattr(pipeline_cfg, "delta_target", False),
         )
         await insert_candidate(db, candidate)
 

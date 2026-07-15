@@ -53,9 +53,17 @@ async def evaluate_model(
     evaluation_type: EvaluationType = EvaluationType.VALIDATION,
     baseline_model_id: str | None = None,
     min_r2_override: float | None = None,
+    delta_target: bool = False,
 ) -> ModelMetricsDocument:
     """
     Compute metrics, check gate thresholds, write model_metrics document.
+
+    delta_target: the y values are horizon deltas (WQI(t+h) − WQI(t)).
+      - baseline_mae = mean|y| is recorded: the MAE of the persistence
+        scenario "no change" (Δ=0).  Because |(cur+Δ̂)−(cur+Δ)| = |Δ̂−Δ|,
+        the model's MAE on deltas equals its MAE on the final forecast
+        value, so mae < baseline_mae ⇔ the model beats persistence.
+      - MAPE is skipped (deltas cross zero; the ratio is meaningless).
 
     Returns the persisted ModelMetricsDocument (with passed_threshold set).
     """
@@ -71,11 +79,15 @@ async def evaluate_model(
     mse  = float(np.mean((y_val - y_pred) ** 2))
     rmse = math.sqrt(mse)
     mape: float | None = None
-    nonzero = y_val != 0
-    if np.any(nonzero):
-        mape = float(np.mean(np.abs((y_val[nonzero] - y_pred[nonzero]) / y_val[nonzero])) * 100)
+    baseline_mae: float | None = None
+    if delta_target:
+        baseline_mae = float(np.mean(np.abs(y_val)))
+    else:
+        nonzero = y_val != 0
+        if np.any(nonzero):
+            mape = float(np.mean(np.abs((y_val[nonzero] - y_pred[nonzero]) / y_val[nonzero])) * 100)
 
-    metrics = ModelMetrics(r2=r2, mae=mae, mse=mse, rmse=rmse, mape=mape)
+    metrics = ModelMetrics(r2=r2, mae=mae, mse=mse, rmse=rmse, mape=mape, baseline_mae=baseline_mae)
 
     # ── Load thresholds from config ────────────────────────────────────────
     raw = get_raw_yaml()
@@ -139,6 +151,8 @@ async def evaluate_model(
         r2=f"{r2:.4f}",
         mae=f"{mae:.4f}",
         mae_relative=f"{mae_relative:.4f}",
+        baseline_mae=f"{baseline_mae:.4f}" if baseline_mae is not None else None,
+        beats_baseline=(mae < baseline_mae) if baseline_mae is not None else None,
         passed=passed,
         rejection_reason=rejection_reason,
     )

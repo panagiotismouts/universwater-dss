@@ -133,6 +133,7 @@ async def _build_prediction_object(
         sensor_id=doc.sensor_id,
         predicted_variable=doc.target_variable,
         predicted_value=doc.predicted_value,
+        predicted_delta=doc.predicted_delta,
         prediction_interval=interval,
         prediction_timestamp=doc.prediction_generated_at,
         input_feature_timestamp=doc.input_feature_timestamp,

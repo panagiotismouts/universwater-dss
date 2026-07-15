@@ -96,6 +96,7 @@ async def _run_bootstrap_for_pipeline(db, pipeline_cfg, start: datetime, end: da
             feature_pipeline=getattr(pipeline_cfg, "feature_pipeline", None),
             excluded_features=getattr(pipeline_cfg, "excluded_features", None),
             horizon_days=getattr(pipeline_cfg, "horizon_days", 0),
+            delta_target=getattr(pipeline_cfg, "delta_target", False),
         )
     except ValueError as exc:
         log.warning("bootstrap_dataset_insufficient", pipeline=pipeline, error=str(exc))
@@ -137,6 +138,7 @@ async def _run_bootstrap_for_pipeline(db, pipeline_cfg, start: datetime, end: da
             store=store,
             feature_pipeline=getattr(pipeline_cfg, "feature_pipeline", None),
             min_r2_threshold=getattr(pipeline_cfg, "min_r2_threshold", None),
+            delta_target=getattr(pipeline_cfg, "delta_target", False),
         )
         candidates.append(result)
 
@@ -172,6 +174,7 @@ async def _train_and_register(
     store: ArtifactStore,
     feature_pipeline: str | None = None,
     min_r2_threshold: float | None = None,
+    delta_target: bool = False,
 ) -> "tuple[str, float, object, str]":
     """Train, evaluate, and register one model type.
 
@@ -201,10 +204,14 @@ async def _train_and_register(
         validation_window_end=val_end,
         evaluation_type=EvaluationType.VALIDATION,
         min_r2_override=min_r2_threshold,
+        delta_target=delta_target,
     )
 
     m = metrics_doc.metrics
-    summary = EmbeddedMetricsSummary(r2=m.r2, mae=m.mae, rmse=m.rmse, mse=m.mse, mape=m.mape)
+    summary = EmbeddedMetricsSummary(
+        r2=m.r2, mae=m.mae, rmse=m.rmse, mse=m.mse, mape=m.mape,
+        baseline_mae=m.baseline_mae,
+    )
 
     inner = getattr(model, "_model", None)
     hyperparams: dict = inner.get_params() if inner is not None else {}
@@ -226,6 +233,7 @@ async def _train_and_register(
         status=ModelStatus.CANDIDATE,
         trained_at=now,
         feature_pipeline=feature_pipeline,
+        target_is_delta=delta_target,
     )
     await insert_candidate(db, candidate)
 

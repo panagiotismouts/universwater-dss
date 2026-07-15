@@ -74,7 +74,11 @@ class PredictionDocument(MongoDocument):
     target_variable: str = Field(..., min_length=1)
 
     # Prediction output
+    # predicted_value is always the final absolute WQI.  For delta-target
+    # models it equals current WQI + predicted_delta (clamped to [0, 100]);
+    # predicted_delta stores the raw model output (the forecast change).
     predicted_value: float
+    predicted_delta: Optional[float] = None
     prediction_interval_low: Optional[float] = None
     prediction_interval_high: Optional[float] = None
 

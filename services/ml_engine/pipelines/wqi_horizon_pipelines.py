@@ -38,6 +38,10 @@ class WqiHorizonPipelineConfig:
     # Forecast skill is inherently lower than nowcast skill; bootstrap always
     # activates the best candidate, so the gate only matters at recalibration.
     min_r2_threshold: float = -2.0
+    # Train on the CHANGE over the horizon (Δ = WQI(t+h) − WQI(t)) rather than
+    # the absolute future value; the predictor anchors the published forecast
+    # as current WQI + predicted Δ.
+    delta_target: bool = True
     sensor_ids: list[str] = field(default_factory=list)
 
 
