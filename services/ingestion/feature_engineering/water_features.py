@@ -1,16 +1,23 @@
 """
-Water pipeline feature engineer (water_v1).
+Water pipeline feature engineer (water_v2).
 
 Computes a feature vector for the water quality pipeline given a reference
 timestamp and a sensor's measurements stored in preprocessed_measurements.
 
-Feature set (water_v1):
-  Water variables (pipeline="water"):
+Feature set (water_v2):
+  Water variables (pipeline="water") — 5 core WQI parameters (wider window,
+  matches the original water_v1 treatment) plus 11 extended parameters
+  (turbidity, do_saturation, tds, salinity, ammonia, nitrate, chlorophyll_a,
+  ammonium, blue_green_algae, cdom, sigma_t) only the new water station
+  provides. Every variable gets: 1h mean/std, a narrower set also gets 3h
+  mean/std, 1-2 lags, and the current value:
     ph_mean_1h, ph_std_1h, ph_mean_3h, ph_lag_1, ph_lag_2
     do_mean_1h, do_std_1h, do_mean_3h, do_lag_1
     temp_water_mean_1h, temp_water_lag_1
     conductivity_mean_1h, conductivity_lag_1
     orp_mean_1h, orp_lag_1
+    <extended var>_mean_1h, <extended var>_std_1h, <extended var>_lag_1
+    (× 11 extended variables)
 
   Meteorological co-features (pipeline="met_water"):
     rainfall_sum_1h, rainfall_sum_3h
@@ -19,6 +26,12 @@ Feature set (water_v1):
 
   Time encodings:
     hour_sin, hour_cos, dayofweek_sin, dayofweek_cos, month_sin, month_cos
+
+A sensor that doesn't report an extended variable (e.g. HCMR, which only
+carries the 5 core parameters) simply never has that variable's features
+computed (all None -> dropped) — those keys are consistently absent from
+its documents, not zero-valued; dataset_builder's key-union + 0.0-fill
+handles this at training time.
 
 Returns None if the water variable window has insufficient data
 (fewer than MIN_WATER_READINGS observations of 'ph' in the 1h window).
@@ -41,7 +54,7 @@ from dss_shared.schemas.measurement import MeasurementDocument
 
 log = get_logger(__name__)
 
-FEATURE_SCHEMA_VERSION = "water_v1"
+FEATURE_SCHEMA_VERSION = "water_v2"
 
 MIN_WATER_READINGS = 1   # minimum 'ph' readings in 1h window (aquaread_1/hcmr send ≤1/hour)
 
@@ -59,6 +72,35 @@ _168H = timedelta(hours=168)  # 7-day window required by CCME-WQI
 # Same values as hcmr_analysis/wqi.py _CCME_OBJECTIVES
 _CCME_MIN_OBS = 6  # minimum complete observations needed to compute CCME
 
+# The 5 core WQI parameters (available from every water sensor) — wider
+# rolling-window treatment (matches the original water_v1 feature set).
+# (raw_variable_name, feature_prefix, rolling_windows, n_lags)
+_CORE_VARIABLES: list[tuple[str, str, tuple[timedelta, ...], int]] = [
+    ("ph",                "ph",           (_1H, _3H), 2),
+    ("dissolved_oxygen",  "do",           (_1H, _3H), 1),
+    ("temperature_water", "temp_water",   (_1H,),     1),
+    ("conductivity",      "conductivity", (_1H,),     1),
+    ("orp",               "orp",          (_1H,),     1),
+]
+
+# The 11 extended parameters — only the new water station (16-parameter
+# probe) reports these. One consistent 1h mean/std + 1 lag treatment.
+_EXTENDED_VARIABLES: list[tuple[str, str, tuple[timedelta, ...], int]] = [
+    ("turbidity",         "turbidity",         (_1H,), 1),
+    ("do_saturation",     "do_saturation",     (_1H,), 1),
+    ("tds",                "tds",              (_1H,), 1),
+    ("salinity",           "salinity",         (_1H,), 1),
+    ("ammonia",            "ammonia",          (_1H,), 1),
+    ("nitrate",             "nitrate",         (_1H,), 1),
+    ("chlorophyll_a",      "chlorophyll_a",    (_1H,), 1),
+    ("ammonium",            "ammonium",        (_1H,), 1),
+    ("blue_green_algae",   "blue_green_algae", (_1H,), 1),
+    ("cdom",                "cdom",            (_1H,), 1),
+    ("sigma_t",             "sigma_t",         (_1H,), 1),
+]
+
+_ALL_VARIABLES = _CORE_VARIABLES + _EXTENDED_VARIABLES
+
 
 async def compute_water_features(
     db: AsyncIOMotorDatabase,
@@ -74,11 +116,22 @@ async def compute_water_features(
     repo = MeasurementRepository(db)
     window_start = feature_timestamp - _168H  # extended for CCME 7-day window
 
-    ph_docs   = await repo.find_window("water", sensor_id, "ph",               window_start, feature_timestamp)
-    do_docs   = await repo.find_window("water", sensor_id, "dissolved_oxygen",  window_start, feature_timestamp)
-    temp_docs = await repo.find_window("water", sensor_id, "temperature_water", window_start, feature_timestamp)
-    cond_docs = await repo.find_window("water", sensor_id, "conductivity",      window_start, feature_timestamp)
-    orp_docs  = await repo.find_window("water", sensor_id, "orp",               window_start, feature_timestamp)
+    # Fetch every raw water variable's window in one generic pass (core +
+    # extended). A sensor lacking a variable (e.g. HCMR for "turbidity")
+    # simply gets an empty list back — handled gracefully throughout.
+    docs_by_var: dict[str, list[MeasurementDocument]] = {}
+    for var_name, _prefix, _windows, _n_lags in _ALL_VARIABLES:
+        docs_by_var[var_name] = await repo.find_window(
+            "water", sensor_id, var_name, window_start, feature_timestamp
+        )
+
+    # Named references to the 5 core lists — required positionally by the
+    # WQI helper functions below, which are unchanged.
+    ph_docs   = docs_by_var["ph"]
+    do_docs   = docs_by_var["dissolved_oxygen"]
+    temp_docs = docs_by_var["temperature_water"]
+    cond_docs = docs_by_var["conductivity"]
+    orp_docs  = docs_by_var["orp"]
 
     rain_docs    = await repo.find_window("met_water", _MET_SENSOR_RAINFALL, "rainfall",        window_start, feature_timestamp)
     airtemp_docs = await repo.find_window("met_water", _MET_SENSOR_AIR_TEMP, "air_temperature", window_start, feature_timestamp)
@@ -95,16 +148,10 @@ async def compute_water_features(
 
     features: dict[str, Optional[float]] = {}
 
-    _add_rolling(features, ph_docs,   feature_timestamp, "ph",           _1H, _3H)
-    _add_lags(features, ph_docs, "ph", n=2)
-    _add_rolling(features, do_docs,   feature_timestamp, "do",           _1H, _3H)
-    _add_lags(features, do_docs, "do", n=1)
-    _add_rolling(features, temp_docs, feature_timestamp, "temp_water",   _1H)
-    _add_lags(features, temp_docs, "temp_water", n=1)
-    _add_rolling(features, cond_docs, feature_timestamp, "conductivity", _1H)
-    _add_lags(features, cond_docs, "conductivity", n=1)
-    _add_rolling(features, orp_docs,  feature_timestamp, "orp",          _1H)
-    _add_lags(features, orp_docs, "orp", n=1)
+    for var_name, prefix, windows, n_lags in _ALL_VARIABLES:
+        var_docs = docs_by_var[var_name]
+        _add_rolling(features, var_docs, feature_timestamp, prefix, *windows)
+        _add_lags(features, var_docs, prefix, n=n_lags)
 
     # Raw current values for target variable candidates (required by dataset_builder)
     _add_current_value(features, ph_docs,   "ph")
@@ -112,6 +159,8 @@ async def compute_water_features(
     _add_current_value(features, temp_docs, "temperature_water")
     _add_current_value(features, cond_docs, "conductivity")
     _add_current_value(features, orp_docs,  "orp")
+    for var_name, _prefix, _windows, _n_lags in _EXTENDED_VARIABLES:
+        _add_current_value(features, docs_by_var[var_name], var_name)
 
     _add_sum(features, rain_docs,    feature_timestamp, "rainfall",    _1H, _3H)
     _add_rolling(features, airtemp_docs, feature_timestamp, "air_temp",  _1H, _3H)
@@ -119,6 +168,9 @@ async def compute_water_features(
     _add_time_encodings(features, feature_timestamp)
 
     # ── WQI targets (stored as features so ML pipelines can use them as y) ──
+    # Deliberately computed from the 5 core parameters only — the WQI
+    # formulas themselves are fixed and never gain new inputs, even for the
+    # 16-parameter sensor.
     features["wqi_brown"]   = _compute_wqi_brown(ph_docs, do_docs, temp_docs, cond_docs, orp_docs, feature_timestamp)
     features["wqi_ccme"]    = _compute_wqi_ccme(ph_docs, do_docs, temp_docs, cond_docs, orp_docs)
     features["wqi_entropy"] = _compute_wqi_entropy(ph_docs, do_docs, temp_docs, cond_docs, orp_docs, feature_timestamp)
@@ -128,7 +180,7 @@ async def compute_water_features(
     if not final_features:
         return None
 
-    all_docs = ph_docs + do_docs + temp_docs + cond_docs + orp_docs
+    all_docs = [d for var_name in docs_by_var for d in docs_by_var[var_name]]
     fill_fraction = _fill_fraction(all_docs)
     all_ts = [d.measured_at for d in all_docs]
 

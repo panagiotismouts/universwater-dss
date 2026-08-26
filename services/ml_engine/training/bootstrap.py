@@ -35,6 +35,7 @@ from services.ml_engine.registry_manager import (
 )
 from services.ml_engine.training.dataset_builder import build_dataset
 from services.ml_engine.training.evaluator import evaluate_model
+from services.ml_engine.training.feature_selection import select_features
 
 log = get_logger(__name__)
 
@@ -102,6 +103,21 @@ async def _run_bootstrap_for_pipeline(db, pipeline_cfg, start: datetime, end: da
         log.warning("bootstrap_dataset_insufficient", pipeline=pipeline, error=str(exc))
         return
 
+    # Automated feature selection (cross-validated RFE, SHAP cross-check) —
+    # runs once per pipeline, shared by every candidate in the model pool
+    # below, so the 8-way comparison stays on the same feature set.
+    selected_names, feature_importance = select_features(X, y, feature_names)
+    if len(selected_names) < len(feature_names):
+        keep_idx = [feature_names.index(n) for n in selected_names]
+        X = X[:, keep_idx]
+        log.info(
+            "bootstrap_feature_selection_applied",
+            pipeline=pipeline,
+            n_before=len(feature_names),
+            n_after=len(selected_names),
+        )
+    feature_names = selected_names
+
     # 80/20 chronological split
     split = int(len(X) * _TRAIN_RATIO)
     if split < 5 or (len(X) - split) < 2:
@@ -139,6 +155,7 @@ async def _run_bootstrap_for_pipeline(db, pipeline_cfg, start: datetime, end: da
             feature_pipeline=getattr(pipeline_cfg, "feature_pipeline", None),
             min_r2_threshold=getattr(pipeline_cfg, "min_r2_threshold", None),
             delta_target=getattr(pipeline_cfg, "delta_target", False),
+            feature_importance=feature_importance,
         )
         candidates.append(result)
 
@@ -175,6 +192,7 @@ async def _train_and_register(
     feature_pipeline: str | None = None,
     min_r2_threshold: float | None = None,
     delta_target: bool = False,
+    feature_importance: dict[str, float] | None = None,
 ) -> "tuple[str, float, object, str]":
     """Train, evaluate, and register one model type.
 
@@ -205,6 +223,8 @@ async def _train_and_register(
         evaluation_type=EvaluationType.VALIDATION,
         min_r2_override=min_r2_threshold,
         delta_target=delta_target,
+        selected_features=feature_names,
+        feature_importance=feature_importance,
     )
 
     m = metrics_doc.metrics

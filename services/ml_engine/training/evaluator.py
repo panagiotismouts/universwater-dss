@@ -54,6 +54,8 @@ async def evaluate_model(
     baseline_model_id: str | None = None,
     min_r2_override: float | None = None,
     delta_target: bool = False,
+    selected_features: list[str] | None = None,
+    feature_importance: dict[str, float] | None = None,
 ) -> ModelMetricsDocument:
     """
     Compute metrics, check gate thresholds, write model_metrics document.
@@ -138,6 +140,8 @@ async def evaluate_model(
         rejection_reason=rejection_reason,
         baseline_model_id=baseline_model_id,
         evaluated_at=now,
+        selected_features=selected_features or [],
+        feature_importance=feature_importance or {},
     )
 
     # ── Persist ────────────────────────────────────────────────────────────

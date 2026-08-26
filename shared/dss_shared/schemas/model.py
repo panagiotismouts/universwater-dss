@@ -227,6 +227,14 @@ class ModelMetricsDocument(MongoDocument):
     threshold_checks: dict[str, ThresholdCheckResult] = Field(default_factory=dict)
     rejection_reason: Optional[str] = None
 
+    # Automated feature selection audit trail (cross-validated RFE, one run
+    # per pipeline shared across the whole candidate pool; empty when
+    # selection was skipped, e.g. insufficient rows). selected_features is
+    # the column subset RFECV kept; feature_importance is the SHAP-based
+    # cross-check ranking (mean |SHAP value|) on the same fitted estimator.
+    selected_features: list[str] = Field(default_factory=list)
+    feature_importance: dict[str, float] = Field(default_factory=dict)
+
     # Comparison baseline (null for initial bootstrap)
     baseline_model_id: Optional[str] = None
 

@@ -32,7 +32,7 @@ class WqiHorizonPipelineConfig:
     target_variable: str
     horizon_days: int
     feature_pipeline: str = "water"
-    feature_schema_version: str = "water_v1"
+    feature_schema_version: str = "water_v2"
     model_types: list[str] = field(default_factory=lambda: list(_MODEL_TYPES))
     excluded_features: list[str] = field(default_factory=list)
     # Forecast skill is inherently lower than nowcast skill; bootstrap always

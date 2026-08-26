@@ -42,6 +42,7 @@ from services.ml_engine.registry_manager import (
 from services.ml_engine.training.bootstrap import _make_model_id
 from services.ml_engine.training.dataset_builder import build_dataset
 from services.ml_engine.training.evaluator import evaluate_model
+from services.ml_engine.training.feature_selection import select_features
 
 log = get_logger(__name__)
 
@@ -113,6 +114,22 @@ async def _recalibrate_pipeline(db, pipeline_cfg, start: datetime, end: datetime
         log.warning("recalibration_dataset_insufficient", pipeline=pipeline, error=str(exc))
         return
 
+    # Automated feature selection (cross-validated RFE, SHAP cross-check) —
+    # re-runs every recalibration on the expanding window, so the selected
+    # subset can evolve as more history accumulates (self-updating, no
+    # human step). Shared by every candidate in the pool below.
+    selected_names, feature_importance = select_features(X, y, feature_names)
+    if len(selected_names) < len(feature_names):
+        keep_idx = [feature_names.index(n) for n in selected_names]
+        X = X[:, keep_idx]
+        log.info(
+            "recalibration_feature_selection_applied",
+            pipeline=pipeline,
+            n_before=len(feature_names),
+            n_after=len(selected_names),
+        )
+    feature_names = selected_names
+
     split = int(len(X) * _TRAIN_RATIO)
     if split < 5 or (len(X) - split) < 2:
         log.warning("recalibration_split_too_small", pipeline=pipeline, n=len(X))
@@ -149,6 +166,8 @@ async def _recalibrate_pipeline(db, pipeline_cfg, start: datetime, end: datetime
             baseline_model_id=baseline_model_id,
             min_r2_override=getattr(pipeline_cfg, "min_r2_threshold", None),
             delta_target=getattr(pipeline_cfg, "delta_target", False),
+            selected_features=feature_names,
+            feature_importance=feature_importance,
         )
 
         m = metrics_doc.metrics
