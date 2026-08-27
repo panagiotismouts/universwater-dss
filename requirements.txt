@@ -1,0 +1,33 @@
+# DSS — consolidated runtime dependencies for the entire monorepo
+# (shared library + ingestion + ml_engine + api_service + host-side scripts/).
+# Generated from the per-package pyproject.toml files; install with:
+#   pip install -r requirements.txt
+
+# ── shared (config, DB client, schemas, logging) ────────────────────────────
+pymongo>=4.6
+motor>=3.3
+pydantic>=2.5
+pydantic-settings>=2.1
+pyyaml>=6.0
+structlog>=24.1
+python-dotenv>=1.0
+
+# ── ingestion service ────────────────────────────────────────────────────────
+httpx>=0.27
+apscheduler>=3.10
+
+# ── ml_engine service (training, prediction, XAI) ───────────────────────────
+scikit-learn>=1.4
+xgboost>=2.0
+lightgbm>=4.0
+catboost>=1.2
+shap>=0.45
+numpy>=1.26
+joblib>=1.3
+
+# ── api_service (external result API) ───────────────────────────────────────
+fastapi>=0.111
+uvicorn[standard]>=0.29
+bcrypt>=4.0
+python-multipart>=0.0.9
+python-jose[cryptography]>=3.3
