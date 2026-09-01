@@ -71,10 +71,13 @@ def build_ml_scheduler(db: AsyncIOMotorDatabase) -> AsyncIOScheduler:
     now = datetime.now(tz=timezone.utc)
 
     # ── Prediction cycle job ───────────────────────────────────────────────
+    # prediction_interval_seconds is sourced from config.yaml; if absent
+    # (settings field default is None), fall back to weekly.
+    interval = settings.prediction_interval_seconds if settings.prediction_interval_seconds is not None else 604800
     scheduler.add_job(
         func=run_prediction_cycle,
         args=[db],
-        trigger=IntervalTrigger(seconds=settings.prediction_interval_seconds),
+        trigger=IntervalTrigger(seconds=interval),
         next_run_time=now,
         id="prediction_cycle",
         name="Prediction cycle",
@@ -85,7 +88,7 @@ def build_ml_scheduler(db: AsyncIOMotorDatabase) -> AsyncIOScheduler:
     log.info(
         "ml_scheduler_job_registered",
         job="prediction_cycle",
-        interval_seconds=settings.prediction_interval_seconds,
+        interval_seconds=interval,
     )
 
     # ── Bootstrap check job ────────────────────────────────────────────────

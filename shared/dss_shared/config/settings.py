@@ -81,7 +81,10 @@ class Settings(BaseSettings):
         default="0 2 * * 1",
         description="Cron expression for weekly recalibration (default: Monday 02:00 UTC).",
     )
-    prediction_interval_seconds: int = Field(default=3600, description="Prediction cycle interval.")
+    prediction_interval_seconds: int | None = Field(
+        default=None,
+        description="Prediction cycle interval in seconds. Leave None to use config.yaml.",
+    )
 
     # ── API Service ───────────────────────────────────────────────────────────
     api_host: str = Field(default="0.0.0.0")
