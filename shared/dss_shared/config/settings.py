@@ -135,3 +135,19 @@ class Settings(BaseSettings):
                 f"(generate with: openssl rand -base64 48)"
             )
         return v
+
+    @field_validator("wings_api_base_url", "wings_sso_url")
+    @classmethod
+    def _validate_wings_urls_not_staging_in_server(cls, v: str, info) -> str:
+        """
+        In server mode, refuse to start if the WINGS URLs still point at the
+        staging environment.  A production deployment that forgets to override
+        the default staging URLs would silently poll dev data.
+        """
+        env = info.data.get("env", "local")
+        if env == "server" and ".staging." in v:
+            raise ValueError(
+                f"{info.field_name}={v!r} still points at staging. "
+                f"Override DSS_WINGS_API_BASE_URL and DSS_WINGS_SSO_URL for server mode."
+            )
+        return v
