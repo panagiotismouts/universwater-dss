@@ -117,3 +117,21 @@ class Settings(BaseSettings):
         if v.lower() not in allowed:
             raise ValueError(f"env must be one of {allowed}, got: {v!r}")
         return v.lower()
+
+    @field_validator("jwt_secret_key", "admin_api_key")
+    @classmethod
+    def _validate_secrets_required_in_server(cls, v: str, info) -> str:
+        """
+        In server mode, refuse to start if the JWT signing key or the admin
+        API key is empty.  Empty defaults are allowed in local/docker mode
+        for development convenience, but empty secrets in a production
+        deployment would silently sign JWTs with "" or reject all admin
+        traffic — both unsafe.
+        """
+        env = info.data.get("env", "local")
+        if env == "server" and not v:
+            raise ValueError(
+                f"{info.field_name} must be set when DSS_ENV=server "
+                f"(generate with: openssl rand -base64 48)"
+            )
+        return v
