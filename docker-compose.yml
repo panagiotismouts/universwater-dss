@@ -12,10 +12,20 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-    # MongoDB is intentionally not exposed on the host in production.
-    # Uncomment the line below for local development access (e.g. MongoDB Compass):
-    ports:
-      - "27017:27017"
+    environment:
+      # Authentication. Operator must set both in .env (see config/.env.example).
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?MONGO_INITDB_ROOT_USERNAME must be set in .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?MONGO_INITDB_ROOT_PASSWORD must be set in .env}
+    # MongoDB is reachable only on the internal docker network. The host port
+    # mapping is intentionally NOT exposed. For local Compass access, run a
+    # one-off container: `docker run --rm -it --network dss_default mongo:7.0 mongosh mongodb://<user>:<pw>@mongo:27017/?authSource=admin`
+    mem_limit: 2g
+    cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   # ── Ingestion service ──────────────────────────────────────────────────────
   ingestion:
@@ -25,7 +35,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DSS_MONGO_URI: mongodb://mongo:27017
+      DSS_MONGO_URI: ${DSS_MONGO_URI:?DSS_MONGO_URI must be set in .env}
       DSS_SERVICE_NAME: ingestion
       DSS_LOG_FORMAT: json
     depends_on:
@@ -33,6 +43,13 @@ services:
         condition: service_healthy
     volumes:
       - ./config/config.yaml:/app/config/config.yaml:ro
+    mem_limit: 1g
+    cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   # ── ML engine ─────────────────────────────────────────────────────────────
   ml_engine:
@@ -42,7 +59,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DSS_MONGO_URI: mongodb://mongo:27017
+      DSS_MONGO_URI: ${DSS_MONGO_URI:?DSS_MONGO_URI must be set in .env}
       DSS_SERVICE_NAME: ml_engine
       DSS_LOG_FORMAT: json
       DSS_MODEL_ARTIFACT_PATH: /app/artifacts
@@ -52,6 +69,15 @@ services:
     volumes:
       - ./config/config.yaml:/app/config/config.yaml:ro
       - model_artifacts:/app/artifacts
+    # ml_engine holds training datasets in memory; SHAP + ensemble + FLAML
+    # AutoML can spike. Sized for a 16 GB host (12 GB allocated, 4 GB headroom).
+    mem_limit: 8g
+    cpus: "2.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   # ── API service ───────────────────────────────────────────────────────────
   api_service:
@@ -61,7 +87,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DSS_MONGO_URI: mongodb://mongo:27017
+      DSS_MONGO_URI: ${DSS_MONGO_URI:?DSS_MONGO_URI must be set in .env}
       DSS_SERVICE_NAME: api_service
       DSS_LOG_FORMAT: json
       DSS_API_HOST: 0.0.0.0
@@ -69,7 +95,9 @@ services:
     depends_on:
       mongo:
         condition: service_healthy
-    # api_service starts independently of ingestion/ml_engine (Amendment C.6)
+    # api_service starts independently of ingestion/ml_engine (Amendment C.6).
+    # Port 8000 is exposed for ssh-tunnel access from team members; do not
+    # rely on this port being unreachable from outside the VM.
     ports:
       - "8000:8000"
     volumes:
@@ -81,6 +109,13 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    mem_limit: 1g
+    cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   mongo_data:
