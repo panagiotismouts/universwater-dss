@@ -19,6 +19,13 @@ services:
     # MongoDB is reachable only on the internal docker network. The host port
     # mapping is intentionally NOT exposed. For local Compass access, run a
     # one-off container: `docker run --rm -it --network dss_default mongo:7.0 mongosh mongodb://<user>:<pw>@mongo:27017/?authSource=admin`
+    mem_limit: 2g
+    cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   # ── Ingestion service ──────────────────────────────────────────────────────
   ingestion:
@@ -36,6 +43,13 @@ services:
         condition: service_healthy
     volumes:
       - ./config/config.yaml:/app/config/config.yaml:ro
+    mem_limit: 1g
+    cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   # ── ML engine ─────────────────────────────────────────────────────────────
   ml_engine:
@@ -55,6 +69,15 @@ services:
     volumes:
       - ./config/config.yaml:/app/config/config.yaml:ro
       - model_artifacts:/app/artifacts
+    # ml_engine holds training datasets in memory; SHAP + ensemble + FLAML
+    # AutoML can spike. Sized for a 16 GB host (12 GB allocated, 4 GB headroom).
+    mem_limit: 8g
+    cpus: "2.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   # ── API service ───────────────────────────────────────────────────────────
   api_service:
@@ -86,6 +109,13 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    mem_limit: 1g
+    cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   mongo_data:
