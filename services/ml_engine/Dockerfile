@@ -28,4 +28,9 @@ ENV DSS_CONFIG_PATH=/app/config/config.yaml \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app
 
+# Run as non-root
+RUN groupadd -r dss && useradd -r -g dss -d /app -s /sbin/nologin dss \
+ && chown -R dss:dss /app
+USER dss
+
 CMD ["python", "-m", "services.ml_engine.main"]

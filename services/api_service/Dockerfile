@@ -31,4 +31,9 @@ ENV DSS_CONFIG_PATH=/app/config/config.yaml \
 
 EXPOSE 8000
 
+# Run as non-root
+RUN groupadd -r dss && useradd -r -g dss -d /app -s /sbin/nologin dss \
+ && chown -R dss:dss /app
+USER dss
+
 CMD ["python", "-m", "services.api_service.main"]
