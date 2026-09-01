@@ -81,7 +81,10 @@ class Settings(BaseSettings):
         default="0 2 * * 1",
         description="Cron expression for weekly recalibration (default: Monday 02:00 UTC).",
     )
-    prediction_interval_seconds: int = Field(default=3600, description="Prediction cycle interval.")
+    prediction_interval_seconds: int | None = Field(
+        default=None,
+        description="Prediction cycle interval in seconds. Leave None to use config.yaml.",
+    )
 
     # ── API Service ───────────────────────────────────────────────────────────
     api_host: str = Field(default="0.0.0.0")
@@ -117,3 +120,37 @@ class Settings(BaseSettings):
         if v.lower() not in allowed:
             raise ValueError(f"env must be one of {allowed}, got: {v!r}")
         return v.lower()
+
+    @field_validator("jwt_secret_key", "admin_api_key")
+    @classmethod
+    def _validate_secrets_required_in_server(cls, v: str, info) -> str:
+        """
+        In server mode, refuse to start if the JWT signing key or the admin
+        API key is empty.  Empty defaults are allowed in local/docker mode
+        for development convenience, but empty secrets in a production
+        deployment would silently sign JWTs with "" or reject all admin
+        traffic — both unsafe.
+        """
+        env = info.data.get("env", "local")
+        if env == "server" and not v:
+            raise ValueError(
+                f"{info.field_name} must be set when DSS_ENV=server "
+                f"(generate with: openssl rand -base64 48)"
+            )
+        return v
+
+    @field_validator("wings_api_base_url", "wings_sso_url")
+    @classmethod
+    def _validate_wings_urls_not_staging_in_server(cls, v: str, info) -> str:
+        """
+        In server mode, refuse to start if the WINGS URLs still point at the
+        staging environment.  A production deployment that forgets to override
+        the default staging URLs would silently poll dev data.
+        """
+        env = info.data.get("env", "local")
+        if env == "server" and ".staging." in v:
+            raise ValueError(
+                f"{info.field_name}={v!r} still points at staging. "
+                f"Override DSS_WINGS_API_BASE_URL and DSS_WINGS_SSO_URL for server mode."
+            )
+        return v
