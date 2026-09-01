@@ -44,8 +44,23 @@ os.environ.setdefault("DSS_ENV",           "local")
 os.environ.setdefault("DSS_LOG_LEVEL",     "INFO")
 os.environ.setdefault("DSS_LOG_FORMAT",    "human")
 os.environ.setdefault("DSS_MODEL_ARTIFACT_PATH", str(_repo / "artifacts"))
-os.environ.setdefault("DSS_JWT_SECRET_KEY", "bootstrap_placeholder")
-os.environ.setdefault("DSS_ADMIN_API_KEY",  "bootstrap_placeholder")
+
+# Secrets: only set dev placeholders in local mode. In server mode, require
+# the operator to export real values so we never silently sign with "".
+def _require_secret(var_name: str) -> None:
+    if os.environ.get(var_name):
+        return
+    if os.environ.get("DSS_ENV", "local") == "local":
+        os.environ.setdefault(var_name, "local_dev_only_placeholder")
+        return
+    sys.exit(
+        f"ERROR: {var_name} must be set when DSS_ENV=server "
+        f"(generate with: openssl rand -base64 48)"
+    )
+
+
+_require_secret("DSS_JWT_SECRET_KEY")
+_require_secret("DSS_ADMIN_API_KEY")
 
 NEW_SENSOR_ID = "new_water_station"
 DEVICE_ID = "865969070680657"
