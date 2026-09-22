@@ -22,6 +22,9 @@ env/
 .env.*
 !.env.example
 !config/.env.example
+client_secret.txt
+*.secret
+secrets/
 
 # Model artifacts
 artifacts/
