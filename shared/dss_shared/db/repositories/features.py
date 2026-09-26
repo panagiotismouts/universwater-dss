@@ -71,6 +71,32 @@ class FeatureRepository(BaseRepository):
             )
         return inserted
 
+    async def exists(
+        self,
+        pipeline: str,
+        sensor_id: str,
+        feature_timestamp: datetime,
+        feature_schema_version: str,
+    ) -> bool:
+        """
+        Cheap existence check on the natural key.
+
+        Used by the ingestion coordinator to skip the (expensive) feature
+        computation for timestamps that already have a vector under the
+        current schema version.  Only the _id is projected, so this is a
+        single covered index lookup on uq_feature_vector.
+        """
+        raw = await self.col.find_one(
+            {
+                "pipeline": pipeline,
+                "sensor_id": sensor_id,
+                "feature_timestamp": feature_timestamp,
+                "feature_schema_version": feature_schema_version,
+            },
+            projection={"_id": 1},
+        )
+        return raw is not None
+
     async def find_latest_for_prediction(
         self,
         pipeline: str,

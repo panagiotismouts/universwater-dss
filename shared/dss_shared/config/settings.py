@@ -71,6 +71,16 @@ class Settings(BaseSettings):
         default=False,
         description="When True, ingestion fetches full historical data instead of incremental.",
     )
+    feature_backfill_max_hours: int = Field(
+        default=168,
+        ge=1,
+        description=(
+            "Upper bound on how many hourly feature timestamps one ingestion run will "
+            "compute per (pipeline, sensor). Batches spanning more than this (e.g. a "
+            "first fetch with no checkpoint) are truncated to the most recent N hours; "
+            "older history must be backfilled explicitly via scripts/."
+        ),
+    )
 
     # ── ML Engine ─────────────────────────────────────────────────────────────
     model_artifact_path: str = Field(

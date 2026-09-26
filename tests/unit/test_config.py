@@ -41,6 +41,14 @@ def test_invalid_env():
         Settings(env="production")
 
 
+def test_feature_backfill_cap_default_and_bounds():
+    """The per-run feature backfill cap defaults to one week and must be >= 1."""
+    assert Settings().feature_backfill_max_hours == 168
+    assert Settings(feature_backfill_max_hours=24).feature_backfill_max_hours == 24
+    with pytest.raises(ValidationError):
+        Settings(feature_backfill_max_hours=0)
+
+
 # ── _flatten_yaml ──────────────────────────────────────────────────────────────
 
 def test_flatten_yaml_flat_dict():

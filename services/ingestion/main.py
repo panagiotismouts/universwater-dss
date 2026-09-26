@@ -21,7 +21,8 @@ import asyncio
 import signal
 
 from dss_shared.config import get_settings
-from dss_shared.db import get_database, probe_mongo
+from dss_shared.db import bootstrap_db, get_database, probe_mongo
+from dss_shared.db.collections import CHECKPOINTS
 from dss_shared.logging import setup_logging, get_logger
 
 from services.ingestion.scheduler import build_ingestion_scheduler
@@ -44,6 +45,23 @@ async def main() -> None:
     db = get_database()
     await probe_mongo(db)
     log.info("mongodb_connected", db=settings.mongo_db_name)
+
+    # 1b. Ensure all indexes exist (idempotent).  The unique index on
+    #     preprocessed_measurements is what makes re-fetches safe; without it
+    #     every overlapping fetch inserts a full duplicate copy.
+    await bootstrap_db(db)
+
+    # 1c. Guard against the most expensive misconfiguration: bootstrap mode
+    #     left on after the initial backfill.  Every tick then re-fetches the
+    #     entire history for every variable.
+    if settings.bootstrap_mode:
+        existing_checkpoints = await db[CHECKPOINTS].count_documents({})
+        if existing_checkpoints:
+            log.warning(
+                "bootstrap_mode_with_existing_checkpoints",
+                checkpoint_count=existing_checkpoints,
+                hint="Set DSS_BOOTSTRAP_MODE=false unless a full re-fetch is intended",
+            )
 
     # 2. Build and start scheduler
     scheduler = build_ingestion_scheduler(db)

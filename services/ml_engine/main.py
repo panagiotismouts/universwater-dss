@@ -24,7 +24,7 @@ import asyncio
 import signal
 
 from dss_shared.config import get_settings
-from dss_shared.db import get_database, probe_mongo
+from dss_shared.db import bootstrap_db, get_database, probe_mongo
 from dss_shared.logging import setup_logging, get_logger
 
 from services.ml_engine.prediction.predictor import run_historical_backfill
@@ -49,6 +49,7 @@ async def main() -> None:
     db = get_database()
     await probe_mongo(db)
     log.info("mongodb_connected", db=settings.mongo_db_name)
+    await bootstrap_db(db)  # idempotent index creation
 
     # 2. Bootstrap detection (blocking before scheduler starts)
     await run_bootstrap_if_needed(db)
