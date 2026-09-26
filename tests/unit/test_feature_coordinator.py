@@ -191,3 +191,40 @@ async def test_coordinator_engineer_error_is_non_fatal(fake_env, monkeypatch):
     await coord.coordinate_feature_engineering(docs, db=None, max_hours=168)
 
     assert computed == [("soil", "soil_station_1", utc(8))]
+
+
+# ── _compute_and_persist(force=...) ────────────────────────────────────────────
+
+class _OverwritingRepo(_FakeRepo):
+    """Upsert reports 'matched, not inserted' for keys that already exist."""
+
+    async def upsert(self, doc):
+        key = (doc.pipeline, doc.sensor_id, doc.feature_timestamp)
+        self.upserted.append(key)
+        return (doc.pipeline, doc.sensor_id, doc.feature_timestamp, coord._SCHEMA_VERSIONS[doc.pipeline]) not in self.existing
+
+
+@pytest.mark.anyio
+async def test_compute_and_persist_force_recomputes_existing_vector(fake_env, monkeypatch):
+    repo, computed = fake_env
+    repo = _OverwritingRepo(existing={("soil", "soil_station_1", utc(6), coord._SCHEMA_VERSIONS["soil"])})
+    monkeypatch.setattr(coord, "FeatureRepository", lambda db: repo)
+
+    # Default: the existing vector is skipped, nothing is computed.
+    outcome = await coord._compute_and_persist("soil", "soil_station_1", utc(6), None, repo)
+    assert outcome == "skipped"
+    assert computed == []
+
+    # force=True: computed again and replaced in place.
+    outcome = await coord._compute_and_persist("soil", "soil_station_1", utc(6), None, repo, force=True)
+    assert outcome == "overwritten"
+    assert computed == [("soil", "soil_station_1", utc(6))]
+    assert repo.upserted == [("soil", "soil_station_1", utc(6))]
+
+
+@pytest.mark.anyio
+async def test_compute_and_persist_force_on_missing_vector_is_a_plain_write(fake_env):
+    repo, computed = fake_env
+    outcome = await coord._compute_and_persist("water", "hcmr", utc(9), None, repo, force=True)
+    assert outcome == "written"
+    assert computed == [("water", "hcmr", utc(9))]

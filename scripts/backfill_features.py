@@ -13,9 +13,21 @@ reuses the coordinator's compute-and-persist path, which:
   - computes via compute_water_features / compute_soil_features otherwise
   - upserts on the natural key (idempotent; safe to re-run or overlap)
 
+Regeneration (--force):
+  Vectors computed while the measurements collection held duplicates (or
+  any other bad source state) are wrong even though they exist.  --force
+  bypasses the skip-if-exists check and recomputes every hour in the range,
+  replacing stored vectors in place (same natural key, fresh created_at).
+  --created-before TS narrows that to vectors whose created_at is older
+  than TS: vectors written after the source data was fixed are left alone,
+  so the run is safe to repeat or to overlap with live ingestion.
+
 Usage (inside the ingestion container, or with the repo on PYTHONPATH):
     python scripts/backfill_features.py --pipeline water --sensor hcmr \
         --start 2026-07-14T00:00 --end 2026-09-19T23:00 [--dry-run]
+    python scripts/backfill_features.py --pipeline soil --sensor soil_station_1 \
+        --start 2026-01-01T00:00 --end 2026-09-26T14:00 \
+        --force --created-before 2026-09-26T14:30Z [--dry-run]
 
 Timestamps are UTC; a trailing "Z" or "+00:00" is accepted.
 """
@@ -66,7 +78,42 @@ def hourly_range(start: datetime, end: datetime) -> list[datetime]:
     return out
 
 
-async def run(pipeline: str, sensor_id: str, start: datetime, end: datetime, dry_run: bool) -> Counter:
+def decide_action(
+    exists: bool,
+    created_at: datetime | None,
+    *,
+    force: bool,
+    created_before: datetime | None,
+) -> str:
+    """
+    Decide what to do with one timestamp given the stored vector's state.
+
+    Returns "compute" (no vector stored), "recompute" (stored vector must be
+    replaced) or "skip" (stored vector is kept).  Pure function so the
+    --force / --created-before policy can be unit-tested without Mongo.
+    """
+    if not exists:
+        return "compute"
+    if not force:
+        return "skip"
+    if created_before is None:
+        return "recompute"
+    # Legacy vectors without created_at are treated as stale.
+    if created_at is None or created_at < created_before:
+        return "recompute"
+    return "skip"
+
+
+async def run(
+    pipeline: str,
+    sensor_id: str,
+    start: datetime,
+    end: datetime,
+    dry_run: bool,
+    *,
+    force: bool = False,
+    created_before: datetime | None = None,
+) -> Counter:
     from dss_shared.db import get_database, probe_mongo
     from dss_shared.db.repositories.features import FeatureRepository
     from dss_shared.logging import get_logger, setup_logging
@@ -96,15 +143,36 @@ async def run(pipeline: str, sensor_id: str, start: datetime, end: datetime, dry
         hours=len(timestamps),
         schema_version=schema_version,
         dry_run=dry_run,
+        force=force,
+        created_before=created_before.isoformat() if created_before else None,
     )
 
     counts: Counter = Counter()
     for i, ts in enumerate(timestamps, 1):
-        if dry_run:
-            exists = await repo.exists(pipeline, sensor_id, ts, schema_version)
-            counts["skipped" if exists else "would_compute"] += 1
+        # One covered index lookup; only the fields the policy needs.
+        raw = await repo.col.find_one(
+            {
+                "pipeline": pipeline,
+                "sensor_id": sensor_id,
+                "feature_timestamp": ts,
+                "feature_schema_version": schema_version,
+            },
+            projection={"_id": 1, "created_at": 1},
+        )
+        created_at = raw.get("created_at") if raw else None
+        if created_at is not None and created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        action = decide_action(raw is not None, created_at, force=force, created_before=created_before)
+
+        if action == "skip":
+            counts["skipped"] += 1
+        elif dry_run:
+            counts["would_compute" if action == "compute" else "would_recompute"] += 1
         else:
-            counts[await _compute_and_persist(pipeline, sensor_id, ts, db, repo)] += 1
+            outcome = await _compute_and_persist(
+                pipeline, sensor_id, ts, db, repo, force=(action == "recompute")
+            )
+            counts[outcome] += 1
         if i % 200 == 0:
             log.info("backfill_progress", done=i, total=len(timestamps), current=ts.isoformat(), **counts)
 
@@ -119,9 +187,24 @@ def main() -> None:
     p.add_argument("--start", required=True, type=parse_utc, help="first feature timestamp (UTC)")
     p.add_argument("--end", required=True, type=parse_utc, help="last feature timestamp (UTC, inclusive)")
     p.add_argument("--dry-run", action="store_true", help="only count existing vs missing, no writes")
+    p.add_argument(
+        "--force", action="store_true",
+        help="recompute vectors that already exist (replaced in place)",
+    )
+    p.add_argument(
+        "--created-before", type=parse_utc, default=None, metavar="TS",
+        help="with --force: only recompute vectors whose created_at is before TS (UTC)",
+    )
     args = p.parse_args()
+    if args.created_before is not None and not args.force:
+        p.error("--created-before only makes sense together with --force")
 
-    counts = asyncio.run(run(args.pipeline, args.sensor, args.start, args.end, args.dry_run))
+    counts = asyncio.run(
+        run(
+            args.pipeline, args.sensor, args.start, args.end, args.dry_run,
+            force=args.force, created_before=args.created_before,
+        )
+    )
     print(dict(counts))
 
 

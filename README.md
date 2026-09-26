@@ -248,6 +248,49 @@ the artifact directory into the `model_artifacts` volume. There is no
 built-in automation; run the commands above on a schedule (cron / systemd
 timer) to keep backups current.
 
+### Regenerating features and retraining models
+
+Feature vectors are computed from the measurements collection at ingestion
+time and are never recomputed on their own. If the source data was wrong
+when they were computed (for example, duplicated measurements before the
+unique index existed), regenerate them explicitly, then retrain.
+
+```bash
+# 1. Which vectors would be recomputed (no writes)
+docker compose run --rm ingestion python scripts/backfill_features.py \
+  --pipeline soil --sensor soil_station_1 \
+  --start 2026-01-01T00:00 --end 2026-09-26T14:00 \
+  --force --created-before 2026-09-26T14:30Z --dry-run
+
+# 2. Recompute them in place (same command without --dry-run)
+```
+
+`--force` recomputes vectors that already exist; `--created-before TS`
+limits that to vectors written before `TS`, so vectors computed after the
+fix are left alone and the run can be repeated or overlap live ingestion.
+
+```bash
+# 3. Current active model per pipeline and its last gate verdict (read-only)
+docker compose run --rm ml_engine python scripts/force_recalibration.py --mode report
+
+# 4a. Retrain with the weekly gate (best passing candidate wins; current model
+#     stays if nothing passes)
+docker compose run --rm ml_engine python scripts/force_recalibration.py --mode recalibrate
+
+# 4b. Replace the active model unconditionally with the best new candidate
+#     (for degenerate models that would otherwise never be displaced)
+docker compose run --rm ml_engine python scripts/force_recalibration.py --mode rebootstrap --pipeline soil
+
+# 5. Regenerate the prediction history with the new active models
+docker compose run --rm ml_engine python scripts/force_recalibration.py --reset-predictions        # counts only
+docker compose run --rm ml_engine python scripts/force_recalibration.py --reset-predictions --yes  # delete + backfill
+```
+
+Both training modes end with a table of every candidate trained in the run
+(R², MAE, gate verdict), so the decision can be made per pipeline. The
+running `ml_engine` picks up a new active model at its next prediction
+cycle; no restart is needed.
+
 ### Security notes
 
 - **WINGS `client_secret` history**: a WINGS OAuth client secret was previously

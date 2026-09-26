@@ -34,3 +34,35 @@ def test_hourly_range_rejects_reversed_bounds():
     start = datetime(2026, 7, 14, 0, 0, tzinfo=timezone.utc)
     with pytest.raises(ValueError):
         bf.hourly_range(start, start - timedelta(hours=1))
+
+
+# ── decide_action: --force / --created-before policy ──────────────────────────
+
+_CUTOFF = datetime(2026, 9, 26, 14, 30, tzinfo=timezone.utc)
+
+
+def test_decide_action_missing_vector_is_always_computed():
+    assert bf.decide_action(False, None, force=False, created_before=None) == "compute"
+    assert bf.decide_action(False, None, force=True, created_before=_CUTOFF) == "compute"
+
+
+def test_decide_action_without_force_keeps_existing():
+    old = _CUTOFF - timedelta(days=1)
+    assert bf.decide_action(True, old, force=False, created_before=None) == "skip"
+
+
+def test_decide_action_force_without_cutoff_recomputes_everything():
+    new = _CUTOFF + timedelta(hours=1)
+    assert bf.decide_action(True, new, force=True, created_before=None) == "recompute"
+
+
+def test_decide_action_force_with_cutoff_only_recomputes_stale_vectors():
+    old = _CUTOFF - timedelta(seconds=1)
+    new = _CUTOFF + timedelta(seconds=1)
+    assert bf.decide_action(True, old, force=True, created_before=_CUTOFF) == "recompute"
+    assert bf.decide_action(True, _CUTOFF, force=True, created_before=_CUTOFF) == "skip"
+    assert bf.decide_action(True, new, force=True, created_before=_CUTOFF) == "skip"
+
+
+def test_decide_action_treats_missing_created_at_as_stale():
+    assert bf.decide_action(True, None, force=True, created_before=_CUTOFF) == "recompute"
