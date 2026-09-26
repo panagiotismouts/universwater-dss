@@ -190,11 +190,18 @@ async def _compute_and_persist(
     feature_timestamp: datetime,
     db: AsyncIOMotorDatabase,
     repo: FeatureRepository,
+    *,
+    force: bool = False,
 ) -> str:
     """
     Compute a feature vector for one (pipeline, sensor_id, timestamp) and
-    upsert it.  Returns one of "written", "exists", "skipped", "no_data",
-    "error" for the caller's summary counters.
+    upsert it.  Returns one of "written", "overwritten", "exists", "skipped",
+    "no_data", "error" for the caller's summary counters.
+
+    force=True bypasses the skip-if-exists check and recomputes the vector
+    even when one is already stored.  The upsert then replaces the stored
+    document in place (same natural key, fresh created_at) — used to
+    regenerate vectors that were computed from bad source data.
     """
     schema_version = _SCHEMA_VERSIONS.get(pipeline)
     if schema_version is None:
@@ -202,7 +209,7 @@ async def _compute_and_persist(
 
     try:
         # Cheap index lookup before the ~20 window queries a computation costs.
-        if await repo.exists(pipeline, sensor_id, feature_timestamp, schema_version):
+        if not force and await repo.exists(pipeline, sensor_id, feature_timestamp, schema_version):
             log.debug(
                 "feature_document_already_exists",
                 pipeline=pipeline,
@@ -226,13 +233,23 @@ async def _compute_and_persist(
             return "no_data"
 
         inserted = await repo.upsert(feature_doc)
+        if inserted:
+            outcome = "written"
+        elif force:
+            outcome = "overwritten"
+        else:
+            outcome = "exists"
         log.info(
-            "feature_document_written" if inserted else "feature_document_already_exists",
+            {
+                "written": "feature_document_written",
+                "overwritten": "feature_document_overwritten",
+                "exists": "feature_document_already_exists",
+            }[outcome],
             pipeline=pipeline,
             sensor_id=sensor_id,
             feature_timestamp=feature_timestamp.isoformat(),
         )
-        return "written" if inserted else "exists"
+        return outcome
 
     except Exception as exc:
         # Feature engineering failure is non-fatal per §A.5 (fail partial not total)

@@ -22,6 +22,9 @@ RUN pip install --no-cache-dir ./services/ml_engine/
 # Copy runtime config
 COPY config/config.yaml ./config/config.yaml
 
+# Copy utility scripts (force_recalibration, etc.)
+COPY scripts/ ./scripts/
+
 ENV DSS_CONFIG_PATH=/app/config/config.yaml \
     DSS_ENV=docker \
     PYTHONUNBUFFERED=1 \

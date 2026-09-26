@@ -57,26 +57,51 @@ def _utc_now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-async def run_recalibration(db: AsyncIOMotorDatabase) -> None:
-    """Run the weekly recalibration cycle for all enabled pipelines."""
-    settings = get_settings()
+def training_window(now: datetime | None = None) -> tuple[datetime, datetime]:
+    """
+    Resolve the (start, end) training window from config.yaml `training`:
+    the expanding window from historical_start_date, or the sliding window
+    of sliding_window_days, ending at `now`.
+    """
     raw = get_raw_yaml()
     training_cfg = raw.get("training", {})
     window_strategy = training_cfg.get("window_strategy", "full")
     sliding_days = int(training_cfg.get("sliding_window_days", 365))
     historical_start_str = training_cfg.get("historical_start_date", "2022-01-01")
 
-    now = _utc_now()
-
+    end = now or _utc_now()
     if window_strategy == "sliding":
-        start = now - timedelta(days=sliding_days)
+        start = end - timedelta(days=sliding_days)
     else:
         start = datetime.fromisoformat(historical_start_str).replace(tzinfo=timezone.utc)
+    return start, end
 
-    log.info("recalibration_started", window_strategy=window_strategy, start=start.isoformat())
+
+async def run_recalibration(
+    db: AsyncIOMotorDatabase,
+    pipelines: list[str] | None = None,
+) -> None:
+    """
+    Run the recalibration cycle for all enabled pipelines.
+
+    pipelines: optional whitelist of pipeline names (scripts/force_recalibration.py);
+    None means every enabled pipeline, as the weekly cron job does.
+    """
+    settings = get_settings()
+    window_strategy = get_raw_yaml().get("training", {}).get("window_strategy", "full")
+    start, now = training_window()
+
+    log.info(
+        "recalibration_started",
+        window_strategy=window_strategy,
+        start=start.isoformat(),
+        pipelines=pipelines,
+    )
 
     for pipeline_cfg in _ENABLED_PIPELINES:
         pipeline_name = pipeline_cfg.pipeline_name
+        if pipelines is not None and pipeline_name not in pipelines:
+            continue
         if (pipeline_name == "water" or pipeline_name.startswith("water_wqi")) and not settings.enable_water_pipeline:
             continue
         if pipeline_name == "soil" and not settings.enable_soil_pipeline:
