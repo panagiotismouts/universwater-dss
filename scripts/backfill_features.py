@@ -13,7 +13,7 @@ reuses the coordinator's compute-and-persist path, which:
   - computes via compute_water_features / compute_soil_features otherwise
   - upserts on the natural key (idempotent; safe to re-run or overlap)
 
-Regeneration (--force):
+Regeneration (--force, --stored):
   Vectors computed while the measurements collection held duplicates (or
   any other bad source state) are wrong even though they exist.  --force
   bypasses the skip-if-exists check and recomputes every hour in the range,
@@ -22,12 +22,19 @@ Regeneration (--force):
   than TS: vectors written after the source data was fixed are left alone,
   so the run is safe to repeat or to overlap with live ingestion.
 
+  Stored vectors are not always on the hour: the coordinator also writes
+  one at each ingestion batch's exact end (e.g. 19:05:13).  An hourly walk
+  never lands on those, so to regenerate what is actually stored use
+  --stored: the timestamps come from the vectors already in the collection
+  within [--start, --end] (filtered by --created-before), and each one is
+  recomputed at its own timestamp.  --stored implies --force.
+
 Usage (inside the ingestion container, or with the repo on PYTHONPATH):
     python scripts/backfill_features.py --pipeline water --sensor hcmr \
         --start 2026-07-14T00:00 --end 2026-09-19T23:00 [--dry-run]
     python scripts/backfill_features.py --pipeline soil --sensor soil_station_1 \
-        --start 2026-01-01T00:00 --end 2026-09-26T14:00 \
-        --force --created-before 2026-09-26T14:30Z [--dry-run]
+        --start 2025-09-23T00:00 --end 2026-09-26T14:30 \
+        --stored --created-before 2026-09-26T14:30Z [--dry-run]
 
 Timestamps are UTC; a trailing "Z" or "+00:00" is accepted.
 """
@@ -104,6 +111,27 @@ def decide_action(
     return "skip"
 
 
+def stored_query(
+    pipeline: str,
+    sensor_id: str,
+    schema_version: str,
+    start: datetime,
+    end: datetime,
+    created_before: datetime | None,
+) -> dict:
+    """Mongo filter selecting the stored vectors --stored will recompute."""
+    q: dict = {
+        "pipeline": pipeline,
+        "sensor_id": sensor_id,
+        "feature_schema_version": schema_version,
+        "feature_timestamp": {"$gte": start, "$lte": end},
+    }
+    if created_before is not None:
+        # Legacy vectors without created_at count as stale (see decide_action).
+        q["$or"] = [{"created_at": {"$lt": created_before}}, {"created_at": {"$exists": False}}]
+    return q
+
+
 async def run(
     pipeline: str,
     sensor_id: str,
@@ -113,6 +141,7 @@ async def run(
     *,
     force: bool = False,
     created_before: datetime | None = None,
+    stored: bool = False,
 ) -> Counter:
     from dss_shared.db import get_database, probe_mongo
     from dss_shared.db.repositories.features import FeatureRepository
@@ -131,8 +160,23 @@ async def run(
     db = get_database()
     await probe_mongo(db)
     repo = FeatureRepository(db)
-    timestamps = hourly_range(start, end)
     schema_version = _SCHEMA_VERSIONS[pipeline]
+
+    if stored:
+        force = True
+        # Materialise the list first so the recompute upserts below never
+        # race the cursor that selected them.
+        cursor = repo.col.find(
+            stored_query(pipeline, sensor_id, schema_version, start, end, created_before),
+            projection={"feature_timestamp": 1},
+            sort=[("feature_timestamp", 1)],
+        )
+        timestamps = [raw["feature_timestamp"] async for raw in cursor]
+        timestamps = [
+            ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc) for ts in timestamps
+        ]
+    else:
+        timestamps = hourly_range(start, end)
 
     log.info(
         "backfill_starting",
@@ -144,6 +188,7 @@ async def run(
         schema_version=schema_version,
         dry_run=dry_run,
         force=force,
+        stored=stored,
         created_before=created_before.isoformat() if created_before else None,
     )
 
@@ -192,17 +237,21 @@ def main() -> None:
         help="recompute vectors that already exist (replaced in place)",
     )
     p.add_argument(
+        "--stored", action="store_true",
+        help="recompute the vectors already stored in the range, at their own timestamps (implies --force)",
+    )
+    p.add_argument(
         "--created-before", type=parse_utc, default=None, metavar="TS",
-        help="with --force: only recompute vectors whose created_at is before TS (UTC)",
+        help="with --force/--stored: only recompute vectors whose created_at is before TS (UTC)",
     )
     args = p.parse_args()
-    if args.created_before is not None and not args.force:
-        p.error("--created-before only makes sense together with --force")
+    if args.created_before is not None and not (args.force or args.stored):
+        p.error("--created-before only makes sense together with --force or --stored")
 
     counts = asyncio.run(
         run(
             args.pipeline, args.sensor, args.start, args.end, args.dry_run,
-            force=args.force, created_before=args.created_before,
+            force=args.force or args.stored, created_before=args.created_before, stored=args.stored,
         )
     )
     print(dict(counts))

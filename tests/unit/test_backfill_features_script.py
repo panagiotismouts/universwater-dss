@@ -66,3 +66,26 @@ def test_decide_action_force_with_cutoff_only_recomputes_stale_vectors():
 
 def test_decide_action_treats_missing_created_at_as_stale():
     assert bf.decide_action(True, None, force=True, created_before=_CUTOFF) == "recompute"
+
+
+# ── stored_query: --stored selection ───────────────────────────────────────────
+
+def test_stored_query_selects_range_and_schema():
+    start = datetime(2025, 9, 23, tzinfo=timezone.utc)
+    end = datetime(2026, 9, 26, tzinfo=timezone.utc)
+    q = bf.stored_query("soil", "soil_station_1", "soil_v1", start, end, None)
+    assert q == {
+        "pipeline": "soil",
+        "sensor_id": "soil_station_1",
+        "feature_schema_version": "soil_v1",
+        "feature_timestamp": {"$gte": start, "$lte": end},
+    }
+
+
+def test_stored_query_with_cutoff_includes_legacy_docs_without_created_at():
+    start = datetime(2025, 9, 23, tzinfo=timezone.utc)
+    q = bf.stored_query("soil", "soil_station_1", "soil_v1", start, _CUTOFF, _CUTOFF)
+    assert q["$or"] == [
+        {"created_at": {"$lt": _CUTOFF}},
+        {"created_at": {"$exists": False}},
+    ]
