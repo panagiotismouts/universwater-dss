@@ -134,6 +134,7 @@ async def _recalibrate_pipeline(db, pipeline_cfg, start: datetime, end: datetime
             excluded_features=getattr(pipeline_cfg, "excluded_features", None),
             horizon_days=getattr(pipeline_cfg, "horizon_days", 0),
             delta_target=getattr(pipeline_cfg, "delta_target", False),
+            sensor_ids=getattr(pipeline_cfg, "sensor_ids", None) or None,
         )
     except ValueError as exc:
         log.warning("recalibration_dataset_insufficient", pipeline=pipeline, error=str(exc))
