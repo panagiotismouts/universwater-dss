@@ -8,13 +8,22 @@ tick.  It executes the complete data pipeline inline:
   [2] Checkpoint filter  → de-duplicated, new-only NormalizedReadings
   [3] Preprocessing      → 6-stage inline pipeline → MeasurementDocuments
   [4] MongoDB write      → preprocessed_measurements (ordered=False, idempotent)
-  [5] Feature engineering→ per (pipeline, sensor_id) FeatureDocuments
-  [6] Checkpoint advance → only on successful write
+  [5] Checkpoint advance → immediately after a successful write
+  [6] Feature engineering→ per (pipeline, sensor_id) FeatureDocuments (best-effort)
 
 Per-job atomicity (Amendment B.6):
   Checkpoint is NOT advanced if the MongoDB write fails.
   The next scheduler tick will re-fetch the same data.
-  Idempotency is preserved by the unique index on preprocessed_measurements.
+  Idempotency is preserved by the unique index uq_measurement_observation on
+  preprocessed_measurements, which dss_shared.db.bootstrap_db creates at
+  service startup.
+
+Checkpoint-before-features:
+  The checkpoint is advanced as soon as the measurements are durably written,
+  BEFORE feature engineering runs.  Feature engineering can be slow (hourly
+  walk over a large batch) and is non-fatal by design; if it were allowed to
+  block the checkpoint, a long feature run would hold the job's single
+  scheduler slot and starve every subsequent fetch for that variable.
 
 Failure isolation (§A.5):
   SourceAPIError   → log WARNING, update checkpoint as failed, continue
@@ -31,7 +40,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from dss_shared.db.repositories.measurements import MeasurementRepository
 from dss_shared.exceptions import SourceAPIError, SourceAPITimeoutError
 from dss_shared.logging import get_logger
-from dss_shared.schemas.enums import Pipeline, ProcessingStatus
+from dss_shared.schemas.enums import ProcessingStatus
 from services.ingestion.checkpoint_manager import CheckpointManager
 from services.ingestion.clients.base_client import BaseAPIClient
 from services.ingestion.feature_engineering.coordinator import coordinate_feature_engineering
@@ -140,22 +149,22 @@ def make_fetch_job(
             await cm.record_partial(source, pipeline, variable_name)
             return  # Do not advance checkpoint; do not run feature engineering
 
-        # ── [6] Feature engineering ───────────────────────────────────────────
+        # ── [6] Advance checkpoint — measurements are durable, so the next
+        #        tick must not re-fetch them regardless of what features do.
+        new_watermark = CheckpointManager.max_measured_at(new_readings)
+        if new_watermark is not None:
+            await cm.advance(source, pipeline, variable_name, new_watermark)
+
+        # ── [7] Feature engineering (best-effort, non-fatal per §A.5) ─────────
         try:
             await coordinate_feature_engineering(measurement_docs, db)
         except Exception as exc:
-            # Feature engineering failure is non-fatal (§A.5)
             log.error(
                 "fetch_job_feature_engineering_error",
                 source=source,
                 variable=variable_name,
                 error=str(exc),
             )
-
-        # ── [7] Advance checkpoint ─────────────────────────────────────────────
-        new_watermark = CheckpointManager.max_measured_at(new_readings)
-        if new_watermark is not None:
-            await cm.advance(source, pipeline, variable_name, new_watermark)
 
         log.info(
             "fetch_job_completed",

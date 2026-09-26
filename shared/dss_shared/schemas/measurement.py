@@ -92,7 +92,9 @@ class MeasurementDocument(MongoDocument):
     MongoDB document shape for the preprocessed_measurements collection.
 
     Natural unique key: (pipeline, sensor_id, variable_name, measured_at).
-    Enforced by a unique compound index in scripts/create_indexes.py.
+    Enforced by the unique compound index uq_measurement_observation, defined in
+    dss_shared.db.collections and created by dss_shared.db.bootstrap_db at every
+    service startup (also runnable on demand via scripts/create_indexes.py).
 
     Immutability: only processing_status and processed_at are updated after
     initial insert.  All other fields are written once.

@@ -25,7 +25,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from dss_shared.config import get_settings
-from dss_shared.db import close_motor_client, get_database, probe_mongo
+from dss_shared.db import bootstrap_db, close_motor_client, get_database, probe_mongo
 from dss_shared.logging import get_logger, setup_logging
 from services.api_service.middleware.delivery_logger import DeliveryLoggerMiddleware
 from services.api_service.routers import admin, auth, results
@@ -42,6 +42,7 @@ async def lifespan(app: FastAPI):
     db = get_database()
     await probe_mongo(db)
     log.info("mongodb_connected", db=settings.mongo_db_name)
+    await bootstrap_db(db)  # idempotent index creation
 
     yield
 
