@@ -54,3 +54,4 @@ logs/
 
 # Jupyter
 .ipynb_checkpoints/
+dss_api_test.sh

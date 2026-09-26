@@ -42,7 +42,12 @@ class WqiHorizonPipelineConfig:
     # the absolute future value; the predictor anchors the published forecast
     # as current WQI + predicted Δ.
     delta_target: bool = True
-    sensor_ids: list[str] = field(default_factory=list)
+    # Stations whose feature vectors feed training and prediction.  Empty means
+    # every station with vectors under feature_pipeline.  Restricted to the
+    # HCMR station (2026-09-26): the new water station has two months of
+    # history, a different parameter set, and pooling it with HCMR under one
+    # model degraded validation for both.
+    sensor_ids: list[str] = field(default_factory=lambda: ["hcmr"])
 
 
 WATER_WQI_BROWN_7D_PIPELINE = WqiHorizonPipelineConfig(

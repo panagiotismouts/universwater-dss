@@ -48,6 +48,7 @@ async def build_dataset(
     excluded_features: list[str] | None = None,
     horizon_days: int = 0,
     delta_target: bool = False,
+    sensor_ids: list[str] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """
     Load and assemble a feature matrix for training.
@@ -73,6 +74,8 @@ async def build_dataset(
                                 the horizon — instead of the absolute future
                                 value.  The published forecast is then
                                 current WQI + predicted delta (predictor side).
+        sensor_ids:             Restrict the dataset to these stations.  None or
+                                empty means every station in the pipeline.
 
     Returns:
         (X, y, feature_names)
@@ -85,6 +88,15 @@ async def build_dataset(
     """
     repo = FeatureRepository(db)
     docs = await repo.find_training_window(feature_pipeline or pipeline, start, end, feature_schema_version)
+    if sensor_ids:
+        wanted = set(sensor_ids)
+        docs = [d for d in docs if d.sensor_id in wanted]
+    # The repository returns rows grouped by sensor, then by time.  The callers'
+    # 80/20 split takes the LAST 20% as validation, so the rows must be in
+    # global time order or the split becomes "last station" instead of
+    # "latest period" (with two stations this put every row of the newer
+    # station in validation and none in training).
+    docs.sort(key=lambda d: (d.feature_timestamp, d.sensor_id))
     log.debug(
         "dataset_builder_docs_loaded",
         pipeline=pipeline,

@@ -77,6 +77,17 @@ async def _discover_sensors(
     return [doc["_id"] async for doc in cursor]
 
 
+def _restrict_sensors(discovered: list[str], pipeline_cfg) -> list[str]:
+    """
+    Apply the pipeline config's sensor_ids whitelist to the stations found in
+    the feature collection.  An empty whitelist means "all discovered".
+    """
+    wanted = getattr(pipeline_cfg, "sensor_ids", None) or []
+    if not wanted:
+        return list(discovered)
+    return [s for s in discovered if s in set(wanted)]
+
+
 async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
     """Run one prediction cycle for all enabled pipelines."""
     settings = get_settings()
@@ -112,6 +123,7 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
 
         feature_pl = active.feature_pipeline or pipeline
         sensor_ids = await _discover_sensors(db, feature_pl, active.feature_schema_version)
+        sensor_ids = _restrict_sensors(sensor_ids, pipeline_cfg)
         if not sensor_ids:
             log.warning("prediction_no_feature_vectors", pipeline=pipeline)
             continue
@@ -295,6 +307,8 @@ async def run_historical_backfill(db: AsyncIOMotorDatabase) -> None:
             end=now,
             feature_schema_version=active.feature_schema_version,
         )
+        allowed = _restrict_sensors(sorted({d.sensor_id for d in feat_docs}), pipeline_cfg)
+        feat_docs = [d for d in feat_docs if d.sensor_id in allowed]
         if not feat_docs:
             log.warning("historical_backfill_no_feature_docs", pipeline=pipeline)
             continue
