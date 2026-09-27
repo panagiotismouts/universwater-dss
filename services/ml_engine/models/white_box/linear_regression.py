@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import joblib
-import numpy as np
-
+from services.ml_engine.models._artifact import ScaledEstimatorMixin
 from services.ml_engine.models.base import BaseModel
 
 
-class LinearRegressionModel(BaseModel):
+class LinearRegressionModel(ScaledEstimatorMixin, BaseModel):
     """Wrapper for sklearn LinearRegression."""
+
+    # OLS predictions are scale-invariant; the mixin is used for the stored
+    # training means (linear SHAP reference) and the artifact format.
+    _scale_inputs = False
 
     def __init__(self) -> None:
         from sklearn.linear_model import LinearRegression
@@ -24,16 +24,3 @@ class LinearRegressionModel(BaseModel):
     @property
     def model_family(self) -> str:
         return "white_box"
-
-    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        self._model.fit(X, y)
-
-    def predict(self, X: np.ndarray) -> np.ndarray:
-        return self._model.predict(X)
-
-    def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(self._model, path)
-
-    def load(self, path: Path) -> None:
-        self._model = joblib.load(path)
