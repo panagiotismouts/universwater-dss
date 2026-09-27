@@ -34,26 +34,38 @@ def data():
     return X, y
 
 
-def test_svr_wrapper_matches_scaler_plus_svr_pipeline(data):
-    X, y = data
-    w = SVRModel(); w.fit(X, y)
-    ref = make_pipeline(StandardScaler(), SVR()).fit(X, y)
-    np.testing.assert_allclose(w.predict(X[:20]), ref.predict(X[:20]), rtol=1e-9, atol=1e-9)
+class _ScaledSVR(SVRModel):
+    _scale_inputs = True
 
 
-def test_elastic_net_wrapper_matches_scaler_plus_elastic_net(data):
+class _ScaledElasticNet(ElasticNetModel):
+    _scale_inputs = True
+
+
+def test_default_wrappers_are_unscaled_like_before(data):
     X, y = data
-    w = ElasticNetModel(); w.fit(X, y)
-    ref = make_pipeline(StandardScaler(), ElasticNet(alpha=1.0, l1_ratio=0.5, max_iter=10000)).fit(X, y)
-    np.testing.assert_allclose(w.predict(X[:20]), ref.predict(X[:20]), rtol=1e-9, atol=1e-9)
+    for w, ref in [(SVRModel(), SVR()), (ElasticNetModel(), ElasticNet(alpha=1.0, l1_ratio=0.5, max_iter=10000))]:
+        w.fit(X, y)
+        assert w._scaler is None
+        np.testing.assert_allclose(w.predict(X[:20]), ref.fit(X, y).predict(X[:20]), rtol=1e-9, atol=1e-9)
+        np.testing.assert_allclose(w.feature_mean_, X.mean(axis=0))
+
+
+def test_scaling_flag_matches_scaler_plus_estimator_pipeline(data):
+    X, y = data
+    for w, ref in [(_ScaledSVR(), make_pipeline(StandardScaler(), SVR())),
+                   (_ScaledElasticNet(), make_pipeline(StandardScaler(), ElasticNet(alpha=1.0, l1_ratio=0.5, max_iter=10000)))]:
+        w.fit(X, y)
+        np.testing.assert_allclose(w.predict(X[:20]), ref.fit(X, y).predict(X[:20]), rtol=1e-9, atol=1e-9)
 
 
 def test_artifact_round_trip_keeps_scaler_and_means(data, tmp_path):
     X, y = data
-    w = SVRModel(); w.fit(X, y)
+    w = _ScaledSVR(); w.fit(X, y)
     path = tmp_path / "m.joblib"
     w.save(path)
-    w2 = SVRModel(); w2.load(path)
+    w2 = _ScaledSVR(); w2.load(path)
+    assert w2._scaler is not None
     np.testing.assert_allclose(w2.predict(X[:10]), w.predict(X[:10]))
     np.testing.assert_allclose(w2.feature_mean_, X.mean(axis=0))
 
@@ -68,14 +80,15 @@ def test_legacy_bare_estimator_artifact_still_loads_unscaled(data, tmp_path):
     np.testing.assert_allclose(w.predict(X[:10]), legacy.predict(X[:10]))
 
 
-def test_linear_terms_are_in_raw_units(data):
+@pytest.mark.parametrize("cls", [ElasticNetModel, _ScaledElasticNet])
+def test_linear_terms_are_in_raw_units(data, cls):
     X, y = data
-    w = ElasticNetModel(); w.fit(X, y)
+    w = cls(); w.fit(X, y)
     coef_raw, intercept_raw = w.linear_terms()
     np.testing.assert_allclose(intercept_raw + X[:10] @ coef_raw, w.predict(X[:10]), rtol=1e-9, atol=1e-9)
 
 
-@pytest.mark.parametrize("cls", [ElasticNetModel, LinearRegressionModel])
+@pytest.mark.parametrize("cls", [ElasticNetModel, _ScaledElasticNet, LinearRegressionModel])
 def test_linear_shap_is_exact_and_mean_referenced(data, cls):
     X, y = data
     w = cls(); w.fit(X, y)
