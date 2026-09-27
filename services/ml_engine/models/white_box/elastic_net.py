@@ -9,8 +9,11 @@ from services.ml_engine.models.base import BaseModel
 class ElasticNetModel(ScaledEstimatorMixin, BaseModel):
     """Wrapper for sklearn ElasticNet."""
 
-    # Standardise inputs inside the wrapper (scale-sensitive estimator).
-    _scale_inputs = True
+    # Input standardisation is available (set True) but OFF: on the WQI
+    # pipelines (2026-09-27 A/B, same split and features) it made SVR worse
+    # on all six and ElasticNet worse on the best one (brown_7d). The
+    # mixin still records training means for exact linear/kernel SHAP.
+    _scale_inputs = False
 
     def __init__(self, alpha: float = 1.0, l1_ratio: float = 0.5) -> None:
         from sklearn.linear_model import ElasticNet

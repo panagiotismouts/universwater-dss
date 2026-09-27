@@ -4,11 +4,13 @@ input scaling or training statistics.
 
 Why:
   - SVR (RBF kernel) and penalised linear models (ElasticNet, Ridge) are
-    scale-sensitive.  Features here range from sin/cos encodings (±1) and pH
-    (~9) to conductivity (~300 µS/cm) and ORP (~400 mV); unscaled, the kernel
-    distance and the L1/L2 penalty are dominated by the large-unit features.
-    These wrappers standardise inputs inside the wrapper, so every caller
-    (trainers, predictor, explainers) keeps passing raw feature rows.
+    scale-sensitive.  A wrapper can standardise inputs internally by setting
+    _scale_inputs = True; callers (trainers, predictor, explainers) keep
+    passing raw feature rows either way.  Currently OFF for all wrappers: on
+    the WQI pipelines (2026-09-27 A/B, same split and features) scaling made
+    SVR worse on all six and ElasticNet worse on the best one (brown_7d); the
+    unscaled models' implicit shrinkage toward "no change" generalises better
+    across the train/validation period shift.
   - Linear SHAP needs the training feature means as its reference point.
     Every wrapper using this helper records them at fit time.
 
