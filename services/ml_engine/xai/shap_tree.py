@@ -9,6 +9,21 @@ import numpy as np
 from services.ml_engine.xai.base import BaseExplainer
 
 
+def scalar_expected_value(expected) -> float:
+    """
+    Reduce a TreeExplainer expected_value to one float.
+
+    CatBoost/XGBoost report a scalar; scikit-learn forests report a
+    1-element array, which numpy 2 refuses to pass through float() directly
+    ("only 0-dimensional arrays can be converted to Python scalars").
+    Multi-output models give one value per output; the first is regression.
+    """
+    arr = np.asarray(expected, dtype=np.float64).ravel()
+    if arr.size == 0:
+        raise ValueError("TreeExplainer returned an empty expected_value")
+    return float(arr[0])
+
+
 class TreeExplainerWrapper(BaseExplainer):
     """SHAP TreeExplainer for XGBoost and RandomForest models."""
 
@@ -38,9 +53,7 @@ class TreeExplainerWrapper(BaseExplainer):
             shap_values = shap_values[0]
 
         shap_row = shap_values[0]   # 1D array of length n_features
-        base_value = float(explainer.expected_value)
-        if isinstance(explainer.expected_value, (list, np.ndarray)):
-            base_value = float(explainer.expected_value[0])
+        base_value = scalar_expected_value(explainer.expected_value)
 
         return {
             "shap_values":     {name: float(val) for name, val in zip(feature_names, shap_row)},
