@@ -175,7 +175,7 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
             xai_explanation: Optional[dict] = None
             top_shap: list[TopShapFeature] = []
 
-            if settings.enable_xai and active.model_family == "black_box":
+            if settings.enable_xai:
                 try:
                     explainer = get_explainer(active.model_family, model_type=active.model_type)
                     xai_explanation = explainer.explain(model, x_row, active.feature_names)
@@ -343,7 +343,9 @@ async def run_historical_backfill(db: AsyncIOMotorDatabase) -> None:
 
             # KernelSHAP (SVR) is ~30s per row — skip XAI during bulk backfill
             # for SVR actives; live weekly predictions still compute it.
-            if settings.enable_xai and active.model_family == "black_box" and active.model_type != "svr":
+            # Linear models use the exact closed-form explainer (microseconds),
+            # decision trees the tree explainer, so both are explained here.
+            if settings.enable_xai and active.model_type != "svr":
                 try:
                     explainer = get_explainer(active.model_family, model_type=active.model_type)
                     xai_explanation = explainer.explain(model, x_row, active.feature_names)
