@@ -6,7 +6,8 @@ Output: list[MeasurementDocument] (ready for MongoDB insert)
 
 Stages:
   1. Variable name validation  — reject unknown variables
-  2. Range validation          — set quality_flag (ok / suspect)
+  2. Range validation          — set quality_flag (ok / suspect / no_data
+                                 for placeholder values)
   3. Unit validation           — warn on unit mismatch (non-fatal)
   4. Forward-fill              — no-op in v1 (raw_value always float)
   5. Build MeasurementDocument
@@ -27,6 +28,7 @@ Note on forward-fill (Stage 4):
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -98,6 +100,30 @@ def _stage1_variable_validation(reading: NormalizedReading) -> VariableSpec:
     return spec
 
 
+# Values a sensor sends in place of a reading.  new_water_station reports
+# whole records of exactly -1 (every variable at once) when it has no data;
+# -1 is inside the physical range of ORP, water temperature and sigma_t, so
+# the range check alone stores them as valid readings.
+_SENSOR_PLACEHOLDERS: dict[str, frozenset[float]] = {
+    "new_water_station": frozenset({-1.0}),
+}
+
+
+def placeholder_flag(sensor_id: str, spec: VariableSpec, value: float) -> Optional[QualityFlag]:
+    """
+    Return the quality flag for a placeholder (non-)reading, or None.
+
+    NO_DATA for the sensor's no-data marker, SUSPECT for an exact 0 of a
+    variable that cannot be 0 (spec.zero_is_missing).  Also used by
+    scripts/flag_placeholder_readings.py to re-flag stored measurements.
+    """
+    if value in _SENSOR_PLACEHOLDERS.get(sensor_id, ()):
+        return QualityFlag.NO_DATA
+    if spec.zero_is_missing and value == 0.0:
+        return QualityFlag.SUSPECT
+    return None
+
+
 def _stage2_range_validation(
     reading: NormalizedReading,
     spec: VariableSpec,
@@ -105,10 +131,21 @@ def _stage2_range_validation(
     """
     Check value against plausible physical range.
 
-    Returns QualityFlag.SUSPECT for out-of-range values.
+    Returns QualityFlag.SUSPECT for out-of-range values, and the
+    placeholder_flag for values that are not readings at all.
     Suspect values are still written to MongoDB per blueprint §F.2 Stage 4.
     """
     value = reading.raw_value
+    flag = placeholder_flag(reading.sensor_id, spec, value)
+    if flag is not None:
+        log.warning(
+            "value_placeholder",
+            sensor_id=reading.sensor_id,
+            variable=reading.variable_name,
+            value=value,
+            flag=flag.value,
+        )
+        return flag
     out_of_range = (
         (spec.min_value is not None and value < spec.min_value)
         or (spec.max_value is not None and value > spec.max_value)
