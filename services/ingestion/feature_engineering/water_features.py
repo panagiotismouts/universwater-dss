@@ -299,6 +299,13 @@ def _compute_wqi_brown(
     return (5 * qi_do + 3 * qi_ph + 2 * qi_temp + 2 * qi_cond + 1 * qi_orp) / 13.0
 
 
+def _ccme_shortfall(value: float, limit: float, signed: bool) -> float:
+    """CCME excursion of a reading below its minimum objective."""
+    if signed:
+        return (limit - value) / abs(limit)
+    return (limit / max(value, 1e-9)) - 1.0
+
+
 def _compute_wqi_ccme(
     ph_docs, do_docs, temp_docs, cond_docs, orp_docs,
 ) -> Optional[float]:
@@ -319,6 +326,12 @@ def _compute_wqi_ccme(
         "orp":  orp_docs,
     }
 
+    # ORP is a signed potential (mV, negative under reducing conditions): the
+    # CCME ratio objective/value - 1 is meaningless for v <= 0 and exploded to
+    # ~2e11 via the 1e-9 clamp, pinning F3 at 100 for the whole 168-h window.
+    # Its excursion is measured as a difference relative to the objective.
+    signed = {"orp"}
+
     total_tests = 0
     total_fails = 0
     total_exc   = 0.0
@@ -336,7 +349,7 @@ def _compute_wqi_ccme(
                 limit = obj[1]
                 if v < limit:
                     n_fail += 1
-                    exc_sum += (limit / max(v, 1e-9)) - 1.0
+                    exc_sum += _ccme_shortfall(v, limit, key in signed)
             elif kind == "max":
                 limit = obj[1]
                 if v > limit:
@@ -346,7 +359,7 @@ def _compute_wqi_ccme(
                 lo, hi = obj[1], obj[2]
                 if v < lo:
                     n_fail += 1
-                    exc_sum += (lo / max(v, 1e-9)) - 1.0
+                    exc_sum += _ccme_shortfall(v, lo, key in signed)
                 elif v > hi:
                     n_fail += 1
                     exc_sum += v / hi - 1.0
