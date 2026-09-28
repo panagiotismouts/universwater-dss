@@ -228,3 +228,105 @@ async def test_compute_and_persist_force_on_missing_vector_is_a_plain_write(fake
     outcome = await coord._compute_and_persist("water", "hcmr", utc(9), None, repo, force=True)
     assert outcome == "written"
     assert computed == [("water", "hcmr", utc(9))]
+
+
+# ── settle window: recent vectors are recomputed when late readings arrive ─────
+
+class _SettleRepo(_OverwritingRepo):
+    """Adds find_timestamps_since over the existing keys and records calls."""
+
+    def __init__(self, existing=None):
+        super().__init__(existing)
+        self.since_calls: list[datetime] = []
+
+    async def find_timestamps_since(self, pipeline, sensor_id, feature_schema_version, since):
+        self.since_calls.append(since)
+        return sorted(
+            ts for (p, s, ts, v) in self.existing
+            if (p, s, v) == (pipeline, sensor_id, feature_schema_version) and ts >= since
+        )
+
+
+@pytest.fixture
+def settle_env(fake_env, monkeypatch):
+    _, computed = fake_env
+    repo = _SettleRepo()
+    monkeypatch.setattr(coord, "FeatureRepository", lambda db: repo)
+    return repo, computed
+
+
+def _existing(pipeline, sensor_id, *hours):
+    version = coord._SCHEMA_VERSIONS[pipeline]
+    return {(pipeline, sensor_id, utc(h), version) for h in hours}
+
+
+@pytest.mark.anyio
+async def test_settle_window_recomputes_recent_existing_vectors(settle_env):
+    repo, computed = settle_env
+    # Vectors 06:00-13:00 exist; now 14:10 with a 6 h window → cutoff 08:10.
+    repo.existing = _existing("water", "hcmr", *range(6, 14))
+    docs = [_doc("water", "hcmr", utc(14))]  # new 14:00 reading
+
+    await coord.coordinate_feature_engineering(
+        docs, db=None, max_hours=168, settle_hours=6, now=utc(14) + timedelta(minutes=10),
+    )
+
+    # 14:00 is new; 09:00-13:00 sit inside the window and are recomputed;
+    # 06:00-08:00 are older than the window and left alone.
+    assert sorted(ts for _, _, ts in computed) == [utc(h) for h in range(9, 15)]
+    assert repo.since_calls == [utc(8) + timedelta(minutes=10)]
+
+
+@pytest.mark.anyio
+async def test_settle_window_forces_planned_timestamp_that_already_exists(settle_env):
+    repo, computed = settle_env
+    repo.existing = _existing("water", "hcmr", 13)
+    docs = [_doc("water", "hcmr", utc(13))]  # a second variable's reading for 13:00
+
+    await coord.coordinate_feature_engineering(
+        docs, db=None, max_hours=168, settle_hours=6, now=utc(13) + timedelta(minutes=40),
+    )
+
+    assert computed == [("water", "hcmr", utc(13))]
+
+
+@pytest.mark.anyio
+async def test_settle_window_leaves_other_sensors_alone(settle_env):
+    repo, computed = settle_env
+    repo.existing = _existing("water", "hcmr", 12, 13) | _existing("water", "new_water_station", 12, 13)
+    docs = [_doc("water", "hcmr", utc(14))]
+
+    await coord.coordinate_feature_engineering(
+        docs, db=None, max_hours=168, settle_hours=6, now=utc(14) + timedelta(minutes=10),
+    )
+
+    assert {s for _, s, _ in computed} == {"hcmr"}
+
+
+@pytest.mark.anyio
+async def test_old_batch_does_not_touch_the_settle_window(settle_env):
+    repo, computed = settle_env
+    # Catch-up batch entirely older than the window: plain skip-if-exists.
+    repo.existing = _existing("water", "hcmr", 6, 7)
+    docs = [_doc("water", "hcmr", utc(0)), _doc("water", "hcmr", utc(8))]
+
+    await coord.coordinate_feature_engineering(
+        docs, db=None, max_hours=168, settle_hours=6, now=utc(8, d=5),
+    )
+
+    assert computed == [("water", "hcmr", utc(8))]
+    assert repo.since_calls == []
+
+
+@pytest.mark.anyio
+async def test_settle_hours_zero_restores_plain_skip_if_exists(settle_env):
+    repo, computed = settle_env
+    repo.existing = _existing("water", "hcmr", 12, 13)
+    docs = [_doc("water", "hcmr", utc(13))]
+
+    await coord.coordinate_feature_engineering(
+        docs, db=None, max_hours=168, settle_hours=0, now=utc(13) + timedelta(minutes=40),
+    )
+
+    assert computed == []
+    assert repo.since_calls == []

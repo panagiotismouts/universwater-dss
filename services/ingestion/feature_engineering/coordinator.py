@@ -29,6 +29,16 @@ Skip-if-exists:
   is ~20 window queries; the check is one index lookup.  Re-runs over
   already-covered ranges therefore cost almost nothing.
 
+Settle window:
+  A vector is first written as soon as any reading for its hour lands, but
+  its inputs keep arriving afterwards: met data lags ~75 min and a station's
+  variables are fetched by separate jobs.  Vectors whose timestamp falls in
+  the last settings.feature_settle_hours (wall clock) are therefore
+  recomputed on every batch for their (pipeline, sensor) instead of being
+  skipped — both the batch's planned timestamps and any other stored
+  vectors in the window.  Older vectors keep skip-if-exists, so a catch-up
+  over a long range still costs one index lookup per existing hour.
+
 Pipeline dispatch:
   "water"     → compute_water_features
   "soil"      → compute_soil_features
@@ -38,7 +48,7 @@ Pipeline dispatch:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -113,6 +123,8 @@ async def coordinate_feature_engineering(
     db: AsyncIOMotorDatabase,
     *,
     max_hours: int | None = None,
+    settle_hours: int | None = None,
+    now: datetime | None = None,
 ) -> None:
     """
     Run feature engineering for all successfully processed documents.
@@ -120,11 +132,16 @@ async def coordinate_feature_engineering(
     Groups documents by (pipeline, sensor_id), plans the hourly feature
     timestamps for each group (bounded by max_hours, default from
     settings.feature_backfill_max_hours), skips timestamps that already
-    have a vector, computes and upserts the rest.
+    have a vector, computes and upserts the rest.  Vectors inside the
+    settle window (settle_hours, default settings.feature_settle_hours,
+    before `now`) are recomputed even when they exist.
     """
     feature_repo = FeatureRepository(db)
     if max_hours is None:
         max_hours = get_settings().feature_backfill_max_hours
+    if settle_hours is None:
+        settle_hours = get_settings().feature_settle_hours
+    settle_cutoff = (now or datetime.now(timezone.utc)) - timedelta(hours=settle_hours)
 
     # Only process successfully preprocessed docs
     ok_docs = [
@@ -163,24 +180,36 @@ async def coordinate_feature_engineering(
                 hint="Run the explicit backfill script for the older range",
             )
 
-        written = skipped = failed = 0
-        for ts in timestamps:
-            outcome = await _compute_and_persist(pipeline, sensor_id, ts, db, feature_repo)
-            if outcome == "written":
-                written += 1
-            elif outcome == "skipped":
-                skipped += 1
-            elif outcome == "error":
-                failed += 1
+        # Stored vectors in the settle window that this batch did not plan:
+        # late readings may have landed in their windows since they were written.
+        # Only a batch reaching into the window can have brought such readings.
+        refresh: list[datetime] = []
+        if settle_hours > 0 and batch_end >= settle_cutoff:
+            planned = set(timestamps)
+            stored = await feature_repo.find_timestamps_since(
+                pipeline, sensor_id, _SCHEMA_VERSIONS[pipeline], settle_cutoff,
+            )
+            refresh = [ts for ts in stored if ts not in planned]
+
+        counts = {"written": 0, "overwritten": 0, "skipped": 0, "error": 0}
+        for ts, force in [
+            *((ts, settle_hours > 0 and ts >= settle_cutoff) for ts in timestamps),
+            *((ts, True) for ts in refresh),
+        ]:
+            outcome = await _compute_and_persist(pipeline, sensor_id, ts, db, feature_repo, force=force)
+            if outcome in counts:
+                counts[outcome] += 1
 
         log.info(
             "feature_engineering_group_done",
             pipeline=pipeline,
             sensor_id=sensor_id,
             planned=len(timestamps),
-            written=written,
-            skipped_existing=skipped,
-            errors=failed,
+            refreshed=len(refresh),
+            written=counts["written"],
+            recomputed=counts["overwritten"],
+            skipped_existing=counts["skipped"],
+            errors=counts["error"],
         )
 
 

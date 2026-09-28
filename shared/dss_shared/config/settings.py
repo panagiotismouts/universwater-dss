@@ -81,6 +81,16 @@ class Settings(BaseSettings):
             "older history must be backfilled explicitly via scripts/."
         ),
     )
+    feature_settle_hours: int = Field(
+        default=6,
+        ge=0,
+        description=(
+            "Feature vectors this recent (hours, wall clock) are recomputed on every "
+            "ingestion batch instead of being skipped as existing, so readings that "
+            "arrive late (met data lags ~75 min; some station variables arrive after "
+            "others) are folded in. Older vectors keep skip-if-exists. 0 disables."
+        ),
+    )
 
     # ── ML Engine ─────────────────────────────────────────────────────────────
     model_artifact_path: str = Field(
@@ -94,6 +104,15 @@ class Settings(BaseSettings):
     prediction_interval_seconds: int | None = Field(
         default=None,
         description="Prediction cycle interval in seconds. Leave None to use config.yaml.",
+    )
+    prediction_input_settle_hours: float = Field(
+        default=3.0,
+        ge=0,
+        description=(
+            "The prediction cycle forecasts from the newest feature vector at least this "
+            "old, so late-arriving readings have been folded in (see feature_settle_hours). "
+            "Falls back to the newest vector if none is old enough. 0 uses the newest."
+        ),
     )
 
     # ── API Service ───────────────────────────────────────────────────────────
