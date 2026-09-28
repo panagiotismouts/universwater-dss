@@ -16,8 +16,10 @@ scheduling:
   # Default: Monday at 02:00 UTC
   recalibration_cron: "0 2 * * 1"
 
-  # Prediction cycle interval in seconds (weekly = 604800)
-  prediction_interval_seconds: 604800
+  # Prediction cycle interval in seconds (hourly = 3600, daily = 86400).
+  # How often a new forecast is issued from the latest features; the forecast
+  # horizon (7/14 days) is set per pipeline and does not depend on this.
+  prediction_interval_seconds: 3600
 
 # ── WINGS datastream mappings ────────────────────────────────────────────────
 # Maps canonical variable_name → WINGS datastream_id.

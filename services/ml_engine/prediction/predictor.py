@@ -88,6 +88,66 @@ def _restrict_sensors(discovered: list[str], pipeline_cfg) -> list[str]:
     return [s for s in discovered if s in set(wanted)]
 
 
+# Input vectors older than this are still used, but logged as stale.
+_STALE_INPUT_HOURS = 6
+
+
+async def _select_feature_vector(
+    feat_repo: FeatureRepository,
+    pipeline: str,
+    feature_pl: str,
+    sensor_id: str,
+    active,
+    now: datetime,
+):
+    """
+    Return the feature vector to predict from, or None to skip this sensor.
+
+    Normally the newest vector.  For delta-target models the newest vector can
+    lack the current WQI (the anchor) because its hour is still incomplete —
+    some of the station's readings arrive later — so fall back to the newest
+    vector that has it rather than skipping the pipeline for the whole cycle.
+    """
+    feat_doc = await feat_repo.find_latest_for_prediction(
+        pipeline=feature_pl,
+        sensor_id=sensor_id,
+        feature_schema_version=active.feature_schema_version,
+    )
+    if feat_doc is None:
+        log.debug("prediction_no_features_for_sensor", pipeline=pipeline, sensor_id=sensor_id)
+        return None
+
+    if active.target_is_delta and feat_doc.features.get(active.target_variable) is None:
+        fallback = await feat_repo.find_latest_for_prediction(
+            pipeline=feature_pl,
+            sensor_id=sensor_id,
+            feature_schema_version=active.feature_schema_version,
+            require_feature=active.target_variable,
+        )
+        if fallback is None:
+            log.warning("prediction_no_anchor_value", pipeline=pipeline, sensor_id=sensor_id)
+            return None
+        log.info(
+            "prediction_anchor_fallback",
+            pipeline=pipeline,
+            sensor_id=sensor_id,
+            latest_feature_timestamp=feat_doc.feature_timestamp.isoformat(),
+            used_feature_timestamp=fallback.feature_timestamp.isoformat(),
+        )
+        feat_doc = fallback
+
+    age_hours = (now - feat_doc.feature_timestamp).total_seconds() / 3600.0
+    if age_hours > _STALE_INPUT_HOURS:
+        log.warning(
+            "prediction_input_stale",
+            pipeline=pipeline,
+            sensor_id=sensor_id,
+            feature_timestamp=feat_doc.feature_timestamp.isoformat(),
+            age_hours=round(age_hours, 1),
+        )
+    return feat_doc
+
+
 async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
     """Run one prediction cycle for all enabled pipelines."""
     settings = get_settings()
@@ -132,13 +192,10 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
         top_n = settings.api_shap_top_n
 
         for sensor_id in sensor_ids:
-            feat_doc = await feat_repo.find_latest_for_prediction(
-                pipeline=feature_pl,
-                sensor_id=sensor_id,
-                feature_schema_version=active.feature_schema_version,
+            feat_doc = await _select_feature_vector(
+                feat_repo, pipeline, feature_pl, sensor_id, active, now,
             )
             if feat_doc is None:
-                log.debug("prediction_no_features_for_sensor", pipeline=pipeline, sensor_id=sensor_id)
                 continue
 
             # Build feature vector aligned to the model's feature_names
