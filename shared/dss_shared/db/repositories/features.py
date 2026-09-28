@@ -102,22 +102,27 @@ class FeatureRepository(BaseRepository):
         pipeline: str,
         sensor_id: str,
         feature_schema_version: str,
+        require_feature: Optional[str] = None,
     ) -> Optional[FeatureDocument]:
         """
         Return the most recent feature vector for a sensor.
 
         Used by the prediction cycle to load the latest available input
-        for the active model.
+        for the active model.  With require_feature, only vectors in which
+        that feature is present and non-null are considered.
 
-        Returns None if no feature vectors exist for this sensor.
+        Returns None if no matching feature vector exists for this sensor.
         """
+        query: dict = {
+            "pipeline": pipeline,
+            "sensor_id": sensor_id,
+            "feature_schema_version": feature_schema_version,
+            "superseded": False,
+        }
+        if require_feature:
+            query[f"features.{require_feature}"] = {"$ne": None}
         raw = await self.col.find_one(
-            {
-                "pipeline": pipeline,
-                "sensor_id": sensor_id,
-                "feature_schema_version": feature_schema_version,
-                "superseded": False,
-            },
+            query,
             sort=[("feature_timestamp", pymongo.DESCENDING)],
         )
         if raw is None:
