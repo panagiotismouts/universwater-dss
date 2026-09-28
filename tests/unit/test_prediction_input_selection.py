@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from dss_shared.db.repositories.features import FeatureRepository
-from services.ml_engine.prediction.predictor import _feature_row, _select_feature_vector
+from services.ml_engine.prediction.predictor import _backfill_end, _feature_row, _select_feature_vector
 
 _NOW = datetime(2026, 9, 28, 14, 32, tzinfo=timezone.utc)
 
@@ -115,6 +115,18 @@ def test_anchor_fallback_stays_within_settle_cutoff():
     chosen = _select(repo, _active(), settle_hours=3)
     assert chosen.feature_timestamp.hour == 10
     assert repo.calls[-1] == {"require_feature": "wqi_brown", "not_after": _NOW - timedelta(hours=3)}
+
+
+# ── backfill: leaves unsettled vectors to the prediction cycle ────────────────
+
+def test_backfill_end_stops_at_settle_cutoff():
+    # now 14:32, settle 3 h → backfill covers up to 11:32 (11:00 vector); the
+    # cycle predicts 12:00 onward once each has settled, with SHAP.
+    assert _backfill_end(_NOW, 3) == _NOW - timedelta(hours=3)
+
+
+def test_backfill_end_without_settle_is_now():
+    assert _backfill_end(_NOW, 0) == _NOW
 
 
 # ── _feature_row: missing features are zero-filled and reported ──────────────
