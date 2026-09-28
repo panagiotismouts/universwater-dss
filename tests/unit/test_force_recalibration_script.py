@@ -56,3 +56,19 @@ def test_plain_unwraps_enum_values():
     assert fr._plain(ModelType.XGBOOST) == "xgboost"
     assert fr._plain(ModelStatus.ACTIVE) == "active"
     assert fr._plain("soil") == "soil"
+
+
+def test_parse_utc_treats_naive_as_utc():
+    from datetime import datetime, timezone
+    assert fr.parse_utc("2026-09-26T15:00") == datetime(2026, 9, 26, 15, tzinfo=timezone.utc)
+    assert fr.parse_utc("2026-09-26T17:00+02:00") == datetime(2026, 9, 26, 15, tzinfo=timezone.utc)
+
+
+def test_reset_query_all_rows_or_since():
+    from datetime import datetime, timezone
+    assert fr.reset_query(["soil"]) == {"pipeline": {"$in": ["soil"]}}
+    since = datetime(2026, 9, 26, 15, tzinfo=timezone.utc)
+    assert fr.reset_query(["soil", "water_wqi_brown_7d"], since) == {
+        "pipeline": {"$in": ["soil", "water_wqi_brown_7d"]},
+        "input_feature_timestamp": {"$gte": since},
+    }

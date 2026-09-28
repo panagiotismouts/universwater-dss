@@ -92,6 +92,24 @@ def _restrict_sensors(discovered: list[str], pipeline_cfg) -> list[str]:
 _STALE_INPUT_HOURS = 6
 
 
+def _feature_row(feat_doc, feature_names: list[str]) -> tuple[np.ndarray, list[str]]:
+    """
+    Build the model input row aligned to feature_names.
+
+    Features absent (or null) in the vector are filled with 0.0 and returned
+    in `missing`, so the prediction can be flagged as built on filled inputs.
+    """
+    values: list[float] = []
+    missing: list[str] = []
+    for fname in feature_names:
+        v = feat_doc.features.get(fname)
+        if v is None:
+            missing.append(fname)
+            v = 0.0
+        values.append(v)
+    return np.array(values, dtype=np.float64).reshape(1, -1), missing
+
+
 async def _select_feature_vector(
     feat_repo: FeatureRepository,
     pipeline: str,
@@ -99,20 +117,41 @@ async def _select_feature_vector(
     sensor_id: str,
     active,
     now: datetime,
+    settle_hours: float = 0.0,
 ):
     """
     Return the feature vector to predict from, or None to skip this sensor.
 
-    Normally the newest vector.  For delta-target models the newest vector can
-    lack the current WQI (the anchor) because its hour is still incomplete —
-    some of the station's readings arrive later — so fall back to the newest
+    Normally the newest vector at least settle_hours old: newer vectors may
+    still be missing readings that arrive late (met data, a station's slower
+    variables) and are recomputed by ingestion once they land.  If no vector
+    is that old, the newest one is used.
+
+    For delta-target models the chosen vector can still lack the current WQI
+    (the anchor) because its hour was incomplete, so fall back to the newest
     vector that has it rather than skipping the pipeline for the whole cycle.
     """
+    not_after = now - timedelta(hours=settle_hours) if settle_hours > 0 else None
     feat_doc = await feat_repo.find_latest_for_prediction(
         pipeline=feature_pl,
         sensor_id=sensor_id,
         feature_schema_version=active.feature_schema_version,
+        not_after=not_after,
     )
+    if feat_doc is None and not_after is not None:
+        not_after = None
+        feat_doc = await feat_repo.find_latest_for_prediction(
+            pipeline=feature_pl,
+            sensor_id=sensor_id,
+            feature_schema_version=active.feature_schema_version,
+        )
+        if feat_doc is not None:
+            log.info(
+                "prediction_input_unsettled",
+                pipeline=pipeline,
+                sensor_id=sensor_id,
+                feature_timestamp=feat_doc.feature_timestamp.isoformat(),
+            )
     if feat_doc is None:
         log.debug("prediction_no_features_for_sensor", pipeline=pipeline, sensor_id=sensor_id)
         return None
@@ -123,6 +162,7 @@ async def _select_feature_vector(
             sensor_id=sensor_id,
             feature_schema_version=active.feature_schema_version,
             require_feature=active.target_variable,
+            not_after=not_after,
         )
         if fallback is None:
             log.warning("prediction_no_anchor_value", pipeline=pipeline, sensor_id=sensor_id)
@@ -194,19 +234,25 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
         for sensor_id in sensor_ids:
             feat_doc = await _select_feature_vector(
                 feat_repo, pipeline, feature_pl, sensor_id, active, now,
+                settle_hours=settings.prediction_input_settle_hours,
             )
             if feat_doc is None:
                 continue
 
             # Build feature vector aligned to the model's feature_names
             try:
-                x_row = np.array(
-                    [feat_doc.features.get(fname, 0.0) for fname in active.feature_names],
-                    dtype=np.float64,
-                ).reshape(1, -1)
+                x_row, missing_features = _feature_row(feat_doc, active.feature_names)
             except Exception as exc:
                 log.error("prediction_feature_vector_failed", sensor_id=sensor_id, error=str(exc))
                 continue
+            if missing_features:
+                log.warning(
+                    "prediction_features_missing",
+                    pipeline=pipeline,
+                    sensor_id=sensor_id,
+                    feature_timestamp=feat_doc.feature_timestamp.isoformat(),
+                    missing=missing_features,
+                )
 
             # Predict
             try:
@@ -258,7 +304,7 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
                 target_variable=active.target_variable,
                 predicted_value=predicted_value,
                 input_feature_timestamp=feat_doc.feature_timestamp,
-                input_had_filled_values=feat_doc.has_filled_inputs,
+                input_had_filled_values=feat_doc.has_filled_inputs or bool(missing_features),
                 target_timestamp=(
                     feat_doc.feature_timestamp + timedelta(days=horizon_days)
                     if horizon_days > 0 else None
@@ -306,17 +352,29 @@ async def run_prediction_cycle(db: AsyncIOMotorDatabase) -> None:
     log.info("prediction_cycle_completed")
 
 
-async def run_historical_backfill(db: AsyncIOMotorDatabase) -> None:
+async def run_historical_backfill(
+    db: AsyncIOMotorDatabase,
+    since: Optional[datetime] = None,
+    pipelines: Optional[list[str]] = None,
+) -> None:
     """
     Write predictions for all historical feature documents for any active WQI
     pipeline that has no predictions older than 7 days.  Called once at startup
     after run_bootstrap_if_needed() so the dashboard history chart is populated.
     Duplicate inserts are silently ignored by PredictionRepository.insert().
+
+    With `since`, predictions are written for feature vectors from that time
+    on, whether or not older predictions exist — used to regenerate a range
+    after its predictions were deleted (scripts/force_recalibration.py).
+    `pipelines` restricts the run to those pipeline names.
     """
     settings = get_settings()
-    raw = get_raw_yaml()
-    historical_start_str = raw.get("training", {}).get("historical_start_date", "2022-01-01")
-    historical_start = datetime.fromisoformat(historical_start_str).replace(tzinfo=timezone.utc)
+    if since is not None:
+        historical_start = since
+    else:
+        raw = get_raw_yaml()
+        historical_start_str = raw.get("training", {}).get("historical_start_date", "2022-01-01")
+        historical_start = datetime.fromisoformat(historical_start_str).replace(tzinfo=timezone.utc)
 
     store = ArtifactStore()
     pred_repo = PredictionRepository(db)
@@ -334,9 +392,11 @@ async def run_historical_backfill(db: AsyncIOMotorDatabase) -> None:
             continue
         if pipeline == "soil" and not settings.enable_soil_pipeline:
             continue
+        if pipelines is not None and pipeline not in pipelines:
+            continue
 
         # Skip if historical predictions already exist
-        has_old = await pred_repo.col.count_documents(
+        has_old = since is None and await pred_repo.col.count_documents(
             {"pipeline": pipeline, "superseded": False, "input_feature_timestamp": {"$lt": cutoff}},
             limit=1,
         ) > 0
@@ -375,10 +435,7 @@ async def run_historical_backfill(db: AsyncIOMotorDatabase) -> None:
 
         for feat_doc in feat_docs:
             try:
-                x_row = np.array(
-                    [feat_doc.features.get(fname, 0.0) for fname in active.feature_names],
-                    dtype=np.float64,
-                ).reshape(1, -1)
+                x_row, missing_features = _feature_row(feat_doc, active.feature_names)
                 raw_pred = float(model.predict(x_row)[0])
             except Exception as exc:
                 log.debug("historical_backfill_predict_failed", sensor_id=feat_doc.sensor_id, error=str(exc))
@@ -426,7 +483,7 @@ async def run_historical_backfill(db: AsyncIOMotorDatabase) -> None:
                 target_variable=active.target_variable,
                 predicted_value=predicted_value,
                 input_feature_timestamp=feat_doc.feature_timestamp,
-                input_had_filled_values=feat_doc.has_filled_inputs,
+                input_had_filled_values=feat_doc.has_filled_inputs or bool(missing_features),
                 target_timestamp=(
                     feat_doc.feature_timestamp + timedelta(days=horizon_days)
                     if horizon_days > 0 else None

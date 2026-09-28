@@ -97,19 +97,45 @@ class FeatureRepository(BaseRepository):
         )
         return raw is not None
 
+    async def find_timestamps_since(
+        self,
+        pipeline: str,
+        sensor_id: str,
+        feature_schema_version: str,
+        since: datetime,
+    ) -> list[datetime]:
+        """
+        Return the feature_timestamps of stored vectors at or after `since`,
+        ascending.  Used by the ingestion coordinator to find recent vectors
+        to recompute when late readings arrive.
+        """
+        cursor = self.col.find(
+            {
+                "pipeline": pipeline,
+                "sensor_id": sensor_id,
+                "feature_schema_version": feature_schema_version,
+                "superseded": False,
+                "feature_timestamp": {"$gte": since},
+            },
+            projection={"_id": 0, "feature_timestamp": 1},
+        ).sort("feature_timestamp", pymongo.ASCENDING)
+        return [raw["feature_timestamp"] async for raw in cursor]
+
     async def find_latest_for_prediction(
         self,
         pipeline: str,
         sensor_id: str,
         feature_schema_version: str,
         require_feature: Optional[str] = None,
+        not_after: Optional[datetime] = None,
     ) -> Optional[FeatureDocument]:
         """
         Return the most recent feature vector for a sensor.
 
         Used by the prediction cycle to load the latest available input
         for the active model.  With require_feature, only vectors in which
-        that feature is present and non-null are considered.
+        that feature is present and non-null are considered; with not_after,
+        only vectors whose feature_timestamp is at or before that time.
 
         Returns None if no matching feature vector exists for this sensor.
         """
@@ -121,6 +147,8 @@ class FeatureRepository(BaseRepository):
         }
         if require_feature:
             query[f"features.{require_feature}"] = {"$ne": None}
+        if not_after is not None:
+            query["feature_timestamp"] = {"$lte": not_after}
         raw = await self.col.find_one(
             query,
             sort=[("feature_timestamp", pymongo.DESCENDING)],

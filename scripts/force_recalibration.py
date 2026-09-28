@@ -33,6 +33,8 @@ follow up with a different mode.
   would be deleted.  The unique index on prediction_results is keyed on
   (pipeline, sensor_id, input_feature_timestamp) — not model_id — so old
   rows must be removed before new ones can be written for the same hours.
+  --since TS limits the reset to rows whose input feature timestamp is >= TS
+  (e.g. after recomputing those feature vectors with backfill_features.py).
 
 --pipeline NAME [NAME ...] restricts every mode to those pipelines.
 
@@ -41,6 +43,7 @@ Usage (inside the ml_engine image, e.g. on the VM):
     docker compose run --rm ml_engine python scripts/force_recalibration.py --mode recalibrate
     docker compose run --rm ml_engine python scripts/force_recalibration.py --mode rebootstrap --pipeline soil
     docker compose run --rm ml_engine python scripts/force_recalibration.py --reset-predictions --yes
+    docker compose run --rm ml_engine python scripts/force_recalibration.py --reset-predictions --yes --since 2026-09-26T15:00
 
 `docker compose run` gives the one-off container the service's env, config
 mount and model_artifacts volume, so saved artifacts land where the running
@@ -205,12 +208,33 @@ async def rebootstrap(db, configs: list) -> None:
         await _run_bootstrap_for_pipeline(db, cfg, start, end)
 
 
-async def reset_predictions(db, pipelines: list[str], confirmed: bool) -> None:
-    """Delete prediction/XAI rows for the pipelines, then regenerate history."""
+def parse_utc(value: str) -> datetime:
+    """Parse an ISO timestamp; naive values are taken as UTC."""
+    ts = datetime.fromisoformat(value)
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+
+def reset_query(pipelines: list[str], since: datetime | None = None) -> dict:
+    """Selector for the prediction/XAI rows a reset deletes."""
+    query: dict = {"pipeline": {"$in": pipelines}}
+    if since is not None:
+        query["input_feature_timestamp"] = {"$gte": since}
+    return query
+
+
+async def reset_predictions(
+    db, pipelines: list[str], confirmed: bool, since: datetime | None = None,
+) -> None:
+    """
+    Delete prediction/XAI rows for the pipelines, then regenerate history.
+
+    With `since`, only rows whose input_feature_timestamp is at or after it
+    are deleted and regenerated (e.g. after recomputing those feature vectors).
+    """
     from dss_shared.db.collections import PREDICTIONS, XAI_RESULTS
     from services.ml_engine.prediction.predictor import run_historical_backfill
 
-    query = {"pipeline": {"$in": pipelines}}
+    query = reset_query(pipelines, since)
     n_pred = await db[PREDICTIONS].count_documents(query)
     n_xai = await db[XAI_RESULTS].count_documents(query)
     print(f"prediction_results matching {pipelines}: {n_pred}")
@@ -223,9 +247,12 @@ async def reset_predictions(db, pipelines: list[str], confirmed: bool) -> None:
     r2 = await db[XAI_RESULTS].delete_many(query)
     print(f"deleted {r1.deleted_count} predictions, {r2.deleted_count} xai results")
 
-    # Only pipelines with no predictions older than 7 days are backfilled, so
-    # pipelines outside --pipeline are skipped by the function's own guard.
-    await run_historical_backfill(db)
+    if since is not None:
+        await run_historical_backfill(db, since=since, pipelines=pipelines)
+    else:
+        # Only pipelines with no predictions older than 7 days are backfilled, so
+        # pipelines outside --pipeline are skipped by the function's own guard.
+        await run_historical_backfill(db)
     for pipeline in pipelines:
         n_after = await db[PREDICTIONS].count_documents({"pipeline": pipeline})
         print(f"{pipeline:<24} predictions now: {n_after}")
@@ -261,7 +288,7 @@ async def amain(args: argparse.Namespace) -> None:
 
     if args.reset_predictions:
         print()
-        await reset_predictions(db, names, confirmed=args.yes)
+        await reset_predictions(db, names, confirmed=args.yes, since=args.since)
 
 
 def main() -> None:
@@ -273,7 +300,13 @@ def main() -> None:
         help="delete prediction_results + xai_results for the selected pipelines and regenerate history",
     )
     p.add_argument("--yes", action="store_true", help="confirm the deletion done by --reset-predictions")
+    p.add_argument(
+        "--since", type=parse_utc, metavar="TS",
+        help="with --reset-predictions: only rows whose input feature timestamp is >= TS (UTC)",
+    )
     args = p.parse_args()
+    if args.since is not None and not args.reset_predictions:
+        p.error("--since requires --reset-predictions")
     asyncio.run(amain(args))
 
 
