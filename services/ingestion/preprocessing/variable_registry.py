@@ -45,6 +45,10 @@ class VariableSpec:
     # Whether the variable is required for the pipeline's feature vector
     is_required: bool = True
 
+    # An exact 0.0 is a non-reading (e.g. a dry or dead conductivity cell),
+    # not a measurement: natural water never has zero conductivity or TDS.
+    zero_is_missing: bool = False
+
 
 # ── Complete variable registry ─────────────────────────────────────────────────
 # Fill durations per blueprint §G.2.
@@ -96,6 +100,7 @@ _VARIABLE_SPECS: dict[str, VariableSpec] = {
         min_value=0.0,
         max_value=10000.0,
         max_fill_duration_seconds=7200,
+        zero_is_missing=True,
     ),
     "orp": VariableSpec(
         name="orp",
@@ -123,6 +128,7 @@ _VARIABLE_SPECS: dict[str, VariableSpec] = {
         min_value=0.0,
         max_value=50000.0,
         max_fill_duration_seconds=7200,
+        zero_is_missing=True,
     ),
     "salinity": VariableSpec(
         name="salinity",
