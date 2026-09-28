@@ -110,6 +110,17 @@ def _feature_row(feat_doc, feature_names: list[str]) -> tuple[np.ndarray, list[s
     return np.array(values, dtype=np.float64).reshape(1, -1), missing
 
 
+def _backfill_end(now: datetime, settle_hours: float) -> datetime:
+    """
+    Newest feature timestamp the historical backfill may predict from.
+
+    Vectors younger than settle_hours are left to the prediction cycle: they
+    may still be missing late readings, and a backfilled row for their hour
+    would block (duplicate key) the cycle's settled, explained prediction.
+    """
+    return now - timedelta(hours=settle_hours) if settle_hours > 0 else now
+
+
 async def _select_feature_vector(
     feat_repo: FeatureRepository,
     pipeline: str,
@@ -367,6 +378,9 @@ async def run_historical_backfill(
     on, whether or not older predictions exist — used to regenerate a range
     after its predictions were deleted (scripts/force_recalibration.py).
     `pipelines` restricts the run to those pipeline names.
+
+    Vectors newer than prediction_input_settle_hours are skipped (see
+    _backfill_end); the prediction cycle covers them once they settle.
     """
     settings = get_settings()
     if since is not None:
@@ -421,7 +435,7 @@ async def run_historical_backfill(
         feat_docs = await feat_repo.find_training_window(
             pipeline=feature_pl,
             start=historical_start,
-            end=now,
+            end=_backfill_end(now, settings.prediction_input_settle_hours),
             feature_schema_version=active.feature_schema_version,
         )
         allowed = _restrict_sensors(sorted({d.sensor_id for d in feat_docs}), pipeline_cfg)
